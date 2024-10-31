@@ -11,7 +11,6 @@ from PIL import Image
 import pydicom
 
 
-
 def get_Subjects(path_root, feature_tensor):
     data = []
     for root, _, files in os.walk(path_root):

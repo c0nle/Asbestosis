@@ -7,7 +7,7 @@ import torch
 from monai.losses.perceptual import torchvision
 
 import wandb
-import pylab
+import matplotlib.pyplot as plt
 from torch import optim, nn
 from torch.amp import GradScaler
 from torchmetrics import AUROC, Accuracy, Precision, Specificity, ROC
@@ -118,17 +118,17 @@ def eval_epoch(data_loader, model, criterion, DEVICE, logging_metrices, epoch_nu
             results['auc'] = auc
 
             # Plot tpr vs 1-fpr
-            fig, ax = pylab.subplots()
-            pylab.plot(fpr, tpr, 'b', label="AUC = %0.3f" % auc)
-            pylab.legend(loc='lower right')
-            pylab.plot()
-            pylab.plot([0, 1], [0, 1], 'r--')
-            pylab.xlim([0, 1])
-            pylab.ylim([0, 1])
-            pylab.ylabel('True Positive Rate')
-            pylab.xlabel('False Positive Rate')
-            pylab.title('Receiver Operating Characteristic - Test ')
-            pylab.show()
+            fig, ax = plt.subplots()
+            plt.plot(fpr, tpr, 'b', label="AUC = %0.3f" % auc)
+            plt.legend(loc='lower right')
+            plt.plot()
+            plt.plot([0, 1], [0, 1], 'r--')
+            plt.xlim([0, 1])
+            plt.ylim([0, 1])
+            plt.ylabel('True Positive Rate')
+            plt.xlabel('False Positive Rate')
+            plt.title('Receiver Operating Characteristic - Test ')
+            plt.show()
             best_index = np.argmax(tpr - fpr)
             wandb.log({
                 "ROC/Test": fig,
@@ -138,7 +138,7 @@ def eval_epoch(data_loader, model, criterion, DEVICE, logging_metrices, epoch_nu
             results['Spec [i]'] = fpr[best_index]
             results['Sens [i]'] = tpr[best_index]
             results['i'] = best_index
-            pylab.close(fig)
+            plt.close(fig)
 
         metric.reset()
     wandb.log(wandb_dict)
