@@ -59,4 +59,4 @@ pd.DataFrame):
             lung_eval, lung_test = train_test_split(lung_test, test_size=1 - evaluation_fraction)
             pleura_eval, pleura_test = train_test_split(pleura_test, test_size=1 - evaluation_fraction)
 
-    return lung_train, pleura_train, symbol_train, symbol_eval, lung_eval, pleura_eval, lung_test, pleura_test, symbol_test
+    return lung_train, pleura_train, symbol_train, lung_eval, pleura_eval, symbol_eval, lung_test, pleura_test, symbol_test
