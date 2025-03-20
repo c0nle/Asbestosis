@@ -1,9 +1,12 @@
+import os
+
 import utils
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-data = pd.read_excel("D:\\Projects\\Thorax\\found_merged_data.xlsx")
+main_path = "/home/debora/Documents/Projects/Thorax/"  # "D:\\Projects\\Thorax\\"
+data = pd.read_excel(main_path + "found_merged_data.xlsx")
 
 symbol_columns = [col for col in data.columns if col.startswith('symbol')]
 symbols_df = data[symbol_columns]
@@ -115,7 +118,7 @@ def plot_distribution(df):
         plt.title(f'Distribution von {col}')
         plt.xlabel(col)
         plt.ylabel('Häufigkeit')
-        plt.savefig(f'D:\\Projects\\Thorax\\data_analysis\\{col}.png')
+        plt.savefig(f'{main_path}data_analysis{os.sep}{col}.png')
 
 
 # Funktion zur Analyse der Korrelation zwischen zwei Spalten
@@ -136,15 +139,27 @@ def plot_correlation(df, title):
     plt.figure(figsize=(20, 16))
     sns.heatmap(high_corr_pairs, annot=True, cmap="coolwarm", vmin=-1, vmax=1)
     plt.title("Korrelationsmatrix {title}".format(title=title))
-    plt.savefig(f'D:\\Projects\\Thorax\\data_analysis\\corr_{title}.png')
+    plt.savefig(f'{main_path}data_analysis{os.sep}corr_{title}.png')
 
 # Verteilung darstellen
-'''distributions = pd.DataFrame({
+distributions = pd.DataFrame({
+    'Column': [col for col in lung_columns],
+    'Entries': [data[col].unique() for col in lung_columns]
+})
+distributions.to_excel(f'{main_path}data_analysis{os.sep}Distributions_Lunge.xlsx', index=False)
+
+distributions = pd.DataFrame({
     'Column': [col for col in pleura_columns],
     'Entries': [data[col].unique() for col in pleura_columns]
 })
-distributions.to_excel('D:\\Projects\\Thorax\\data_analysis\\Distributions_Pleura.xlsx', index=False)
-'''
+distributions.to_excel(f'{main_path}data_analysis{os.sep}Distributions_Pleura.xlsx', index=False)
+
+distributions = pd.DataFrame({
+    'Column': [col for col in symbol_columns],
+    'Entries': [data[col].unique() for col in symbol_columns]
+})
+distributions.to_excel(f'{main_path}data_analysis{os.sep}Distributions_Symbols.xlsx', index=False)
+
 plot_correlation(pleura_df, "Pleura")
 plot_correlation(lung_df, "Lung")
 plot_correlation(symbols_df, "Symbols")

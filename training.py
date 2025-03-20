@@ -177,7 +177,7 @@ def get_dataloader(training_feature, lung_train, pleura_train, symbol_train, lun
                                   generator=generator,
                                   drop_last=False, pin_memory=False, prefetch_factor=15)
 
-    test_subjects = get_Subjects(path_root, train_set)
+    test_subjects = get_Subjects(path_root, test_set)
     dataset_test = tio.SubjectsDataset(test_subjects, transform)
     loader_test = tio.SubjectsLoader(dataset_test, batch_size=batch_size, shuffle=False, num_workers=n_workers,
                                   generator=generator,
