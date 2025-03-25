@@ -115,8 +115,8 @@ if __name__ == '__main__':
     ])
 
     # Datenvorverarbeitung: fehlende Werte handeln; einlesen
-    root_folder = "\\wsl.localhost\\Ubuntu\\home\\debora\\DeboraThorax\\png\\"
-    parent_folder = "D:\\Projects\\Thorax\\ArbeitsRadio\\ArbeitsRadio\\"
+    parent_folder = "/hpcwork/it336446/Data/DeboraThorax/" # "D:\\Projects\\Thorax\\ArbeitsRadio\\ArbeitsRadio\\"
+    root_folder = parent_folder + "png/" # "\\wsl.localhost\\Ubuntu\\home\\debora\\DeboraThorax\\png\\"
     fold_folder = parent_folder + "split_folds\\"
 
     metadata_file = parent_folder + "merged_data.csv"
@@ -125,8 +125,8 @@ if __name__ == '__main__':
     learning_rate = 0.0001
     number_of_epochs = 20
     fold = 0
-    # column_groups keys are general, symbol, rounded, irregular, mixed, large, pleura, occupational
-    column_group = "symbol"
+    # column_groups keys are general, symbol, rounded, irregular, mixed, large, pleural, occupational
+    column_group = "pleural"
 
     metadata = pandas.read_csv(metadata_file)
     column_groups = get_column_name_groups(metadata) # group columns into logical
@@ -198,6 +198,7 @@ if __name__ == '__main__':
         "Augmentation": str(preprocess),
         "Machine": "Local",
         "Pretrained": str(ResNet50_Weights),
+        "train criteria": column_group,
         "Fold": fold
     }, name="b={}_l={}_n={}_fold={}".format(batch_size, learning_rate, number_of_epochs, fold))
     # perform training
