@@ -280,6 +280,8 @@ if __name__ == '__main__':
                                  fold_splitted_metadata_filename)
     else:
         metadata = pd.read_csv(fold_splitted_metadata_filename)
+    criterion_label = column_groups[column_group][0]
+    metadata = metadata[metadata[criterion_label] != -1]
     test_metadata = metadata[metadata[f'Fold{fold}'] == 'test']
     train_metadata = metadata[metadata[f'Fold{fold}'] == 'train']
 
@@ -295,7 +297,7 @@ if __name__ == '__main__':
     # dataloader
     n_workers = mp.cpu_count() if mp.cpu_count() < 25 else 24
     gen = torch.Generator()
-    train_dataset = X_rayImageDataset(current_train_metadata, root_folder, label_column=column_groups[column_group][0], transform=preprocess)
+    train_dataset = X_rayImageDataset(current_train_metadata, root_folder, label_column=criterion_label, transform=preprocess)
     train_sampler = RandomSampler(train_dataset, replacement=False, generator=gen)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False, num_workers=n_workers, sampler=train_sampler,
                         generator=gen, drop_last=True, pin_memory=False)
