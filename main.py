@@ -1,18 +1,20 @@
 import gc
-
+import os
+import numpy as np
 import pandas as pd
+
+import PIL.Image
 import torch
-import torchvision
-import wandb
+from torch import nn, optim, GradScaler
 from torch.utils.data import Dataset, RandomSampler, DataLoader
 from torchvision.models import resnet50, ResNet50_Weights
 from torchvision.transforms import transforms
 import torch.multiprocessing as mp
-from torch import nn, optim, GradScaler
-import pandas
-import os
 from sklearn.model_selection import StratifiedGroupKFold
+from sklearn.metrics import roc_curve, auc
+
 import matplotlib.pyplot as plt
+import wandb
 
 
 class MultiOutputResNet(nn.Module):
@@ -54,7 +56,7 @@ def create_splits(metadata: pd.DataFrame, n_testfolds: int, output_folder: str, 
 def get_column_name_groups(metadata: pd.DataFrame):
     general_columns = ['Nachname', 'Vorname', 'Geburtsdatum', 'medicoID', 'Untersuchungsdatum',
                        'Untersuchung_Ort', 'Untersuchung_Art', 'id', 'Untersuchung_id',
-                       'technical_quality']
+                       'technical_quality', "medicoID_y", "fileID"]
     symbol_columns = [col for col in metadata.columns if col.startswith('symbol_')]
     symbol_columns.extend(general_columns)
 
@@ -89,21 +91,128 @@ def get_column_name_groups(metadata: pd.DataFrame):
 
 class X_rayImageDataset(Dataset):
     def __init__(self, annotations, img_dir, label_column: str, transform=None):
-        self.img_labels = annotations
         self.img_dir = img_dir
+        self.img_labels = self.get_available_data(annotations)
         self.transform = transform
         self.label_column = label_column
+
+    def get_available_data(self, annotations):
+        available_annotations = []
+        for filename in annotations["fileID"]:
+            if os.path.exists(self.img_dir + str(int(filename)) + '-IM_0001.png'):
+                available_annotations.append(int(filename))
+        return annotations[annotations['fileID'].isin(available_annotations)]
 
     def __len__(self):
         return len(self.img_labels)
 
     def __getitem__(self, idx):
-        img_path = os.path.join(self.img_dir, self.img_labels.iloc[idx, 0]) # TODO match metadata file with image name
-        image = torchvision.io.read_image(img_path)
+        img_path = self.img_dir + str(int(self.img_labels.iloc[idx]['fileID'])) + '-IM_0001.png'
+        image = PIL.Image.open(img_path)
         label = self.img_labels.iloc[idx][self.label_column]
         if self.transform:
             image = self.transform(image)
-        return image, label
+        return image, label, img_path
+
+
+def run_epoch(model, optimizer, criterion, scaler, data_loader, train=True, show_figs=True):
+    if train:
+        model.train()
+    else:
+        model.eval()
+
+    torch.set_grad_enabled(train)
+    epoch_loss = 0
+    counter = -1
+    set_length = len(data_loader)
+    y_true = torch.zeros((set_length, batch_size), dtype=torch.int)  # true labels
+    y_probs = torch.zeros((set_length, batch_size), dtype=torch.float)  # predicted probabilities for cancer
+    for batch_id, (data, ground_truth, path) in enumerate(data_loader):
+        counter += 1
+        if counter % 100 == 0:
+            gc.collect()
+            if show_figs:
+                # Create a figure and axis objects for depth dimension (images of size 256x256)
+                plt.imshow(torch.clip(data[0, 0], 0, 100), cmap='gray', interpolation=None)
+                plt.title(path[0].split(os.sep)[-1])
+                plt.show()
+                plt.close()
+
+        data = data.to(device)
+        ground_truth = ground_truth.to(device)
+        optimizer.zero_grad()
+
+        with torch.autocast(device_type=device, dtype=torch.float16):
+            pred_probs = model(data)
+            loss = criterion(pred_probs[:, 0], ground_truth)
+        if train:
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+
+        y_true[batch_id][0:len(ground_truth)] = ground_truth
+        y_probs[batch_id][0:len(ground_truth)] = pred_probs[:, 0]
+
+        wandb.log({f"loss/train": loss.item()}, commit=False)
+        epoch_loss += loss.item()
+        print('Train step loss: {}'.format(loss.item()))
+    avg_epoch_loss = epoch_loss / len(data_loader)
+    print('Train {}: \tAverage Loss: {:.6f}'.format(
+        "Epoch " + str(epoch),
+        avg_epoch_loss))
+    return y_true, y_probs
+
+def compute_roc_curve(y_true, y_scores, plot=False, title_suffix=''):
+    """
+    Compute the ROC curve and AUC (Area Under the Curve).
+
+    Parameters:
+    - y_true: Ground truth labels (true binary labels).
+    - y_scores: Predicted scores or probabilities for positive class.
+    - plot: Boolean to define if computed ROC AUC shall be plotted or not. Default is False.
+    - title_suffix: string to be appended to the plot title in case plot=True.
+    If plot is False, this parameter is ignored.
+
+    Returns:
+    - fpr: False Positive Rate (1 - Specificity).
+    - tpr: True Positive Rate (Sensitivity).
+    - roc_auc: Area Under the ROC Curve (AUC).
+    """
+    fpr, tpr, thresholds = roc_curve(y_true.flatten().detach().numpy(), y_scores.flatten().detach().numpy())
+    best_index = np.argmax(tpr - fpr)
+    print("Youden Index: ", thresholds[best_index])
+    print(f"FPR: {fpr[best_index]}, TPR: {tpr[best_index]}")
+    print(f"Specificity: {1 - fpr[best_index]}, Sensitivity: {tpr[best_index]}")
+    roc_auc = auc(fpr, tpr)
+
+    if plot:
+        # ROC plot
+        if title_suffix is None:
+            title_suffix = ''
+        plt.title('Receiver Operating Characteristic: ' + title_suffix)
+        plt.plot(fpr, tpr, 'b', label='AUC = %0.2f' % roc_auc)
+        plt.legend(loc='lower right')
+        plt.plot([0, 1], [0, 1], 'r--')
+        plt.xlim([0, 1])
+        plt.ylim([0, 1])
+        plt.ylabel('True Positive Rate')
+        plt.xlabel('False Positive Rate')
+        #plt.show()
+
+        title_suffix = title_suffix.replace(' ', '_')
+        title_suffix = title_suffix.replace('resnet50_', '')
+        title_suffix = title_suffix.replace('resnet18_', '')
+        roc_key = "roc_auc/" + title_suffix
+        spec_key = "Specificity (Youden)/" + title_suffix
+        sens_key = "Sensitivity (Youden)/" + title_suffix
+        wandb.log({
+            roc_key: wandb.Image(plt),
+            spec_key: 1 - fpr[best_index],
+            sens_key: tpr[best_index]
+        })
+        plt.close()
+
+    return {"fpr": fpr, "tpr": tpr, "thresholds": thresholds, "best_index_val": best_index, "roc_auc_val": roc_auc}
 
 
 if __name__ == '__main__':
@@ -111,15 +220,17 @@ if __name__ == '__main__':
         transforms.Resize(256),
         transforms.CenterCrop(224),
         transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        #transforms.Normalize(0.5, 0.5),
     ])
 
     # Datenvorverarbeitung: fehlende Werte handeln; einlesen
-    parent_folder = "/hpcwork/it336446/Data/DeboraThorax/" # "D:\\Projects\\Thorax\\ArbeitsRadio\\ArbeitsRadio\\"
-    root_folder = parent_folder + "png/" # "\\wsl.localhost\\Ubuntu\\home\\debora\\DeboraThorax\\png\\"
-    fold_folder = parent_folder + "split_folds\\"
+    base_folder = "/hpcwork/it336446/Data/DeboraThorax/" # "D:\\Projects\\Thorax\\DeboraThorax\\png\\"
+    root_folder = base_folder + "png/" 
+    mapping_file = base_folder + "mapping.csv"  # "D:\\Projects\\Thorax\\mapping.csv"
+    fold_folder = base_folder + "split_folds/"
 
-    metadata_file = parent_folder + "merged_data.csv"
+    metadata_file = base_folder + "merged_data.csv"
+    anford_nr_file = base_folder + "table.csv"
     nan_thresh = 999
     batch_size = 16
     learning_rate = 0.0001
@@ -128,16 +239,26 @@ if __name__ == '__main__':
     # column_groups keys are general, symbol, rounded, irregular, mixed, large, pleural, occupational
     column_group = "pleural"
 
-    metadata = pandas.read_csv(metadata_file)
-    column_groups = get_column_name_groups(metadata) # group columns into logical
+    metadata = pd.read_csv(metadata_file)
+    metadata['Geburtsdatum'] = pd.to_datetime(metadata['Geburtsdatum'], format='%d.%m.%Y')
+    metadata['Untersuchungsdatum'] = pd.to_datetime(metadata['Untersuchungsdatum'], format='%d.%m.%Y')
 
-    # generate medicoIDs to replace nan-values
-    unique_patients_with_nan_medicoID = metadata[['Nachname', 'Vorname', 'Geburtsdatum']].drop_duplicates()
-    unique_patients_with_nan_medicoID['medicoID_created'] = range(1, len(unique_patients_with_nan_medicoID) + 1)
-    metadata = metadata.merge(unique_patients_with_nan_medicoID, on=['Nachname', 'Vorname', 'Geburtsdatum'], how='left')
-    metadata['medicoID'] = metadata['medicoID_created']
+    anford_nr = pd.read_csv(anford_nr_file,
+                                usecols=["Name", "Vorname", "Geburtsdatum", "Anforderungsnummer", "Untersuchungsdatum"])
+    anford_nr.rename(columns={"Name": "Nachname"}, inplace=True)
+    anford_nr['Geburtsdatum'] = pd.to_datetime(anford_nr['Geburtsdatum'], format='%m/%d/%Y')  # '%Y-%m-%d'
+    anford_nr['Untersuchungsdatum'] = pd.to_datetime(anford_nr['Untersuchungsdatum'], format='%m/%d/%Y')
 
-    col_to_drop = ['medicoID_created']
+    metadata = metadata.merge(anford_nr, "inner", ["Nachname", "Vorname", "Geburtsdatum", "Untersuchungsdatum"])
+    mapping = pd.read_csv(mapping_file)
+    mapping["medicoID"] = mapping["medicoID"].astype(str).apply(lambda x: x[:-4])
+    metadata["Anforderungsnummer_y"] = metadata["Anforderungsnummer_y"].astype(str) # .apply(lambda x: x[:-2])
+    metadata = metadata.merge(mapping, "inner", left_on="Anforderungsnummer_y", right_on="medicoID")
+    metadata.rename(columns={"Anforderungsnummer_y": "Anforderungsnummer", "medicoID_x": "medicoID"}, inplace=True)
+
+    column_groups = get_column_name_groups(metadata)  # group columns into logical
+
+    col_to_drop = ["medicoID_y"]
     # find other columns to drop: all that have more nan entries than nan_thresh
     nan_per_column_count = [(col_name, len(metadata[metadata[col_name] != metadata[col_name]])) for col_name in metadata.columns]
     for col_name, nan_count in nan_per_column_count:
@@ -158,7 +279,7 @@ if __name__ == '__main__':
                                  fold_folder,
                                  fold_splitted_metadata_filename)
     else:
-        metadata = pandas.read_csv(fold_splitted_metadata_filename)
+        metadata = pd.read_csv(fold_splitted_metadata_filename)
     test_metadata = metadata[metadata[f'Fold{fold}'] == 'test']
     train_metadata = metadata[metadata[f'Fold{fold}'] == 'train']
 
@@ -166,6 +287,7 @@ if __name__ == '__main__':
     current_test_metadata = test_metadata[[col for col in column_groups[column_group] if col in metadata.columns]]
 
     model = resnet50(weights=ResNet50_Weights)
+    model.conv1 = torch.nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
 
     num_classes = len(current_train_metadata.columns) - len(column_groups["general"])
     model.fc = torch.nn.Linear(model.fc.in_features, num_classes)
@@ -183,7 +305,7 @@ if __name__ == '__main__':
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=n_workers, sampler=test_sampler,
                         generator=gen, drop_last=True, pin_memory=False)
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
     optimizer = optim.AdamW(model.parameters(), lr=learning_rate)
 
     wandb.init(project="Asbest", config={
@@ -201,90 +323,17 @@ if __name__ == '__main__':
         "train criteria": column_group,
         "Fold": fold
     }, name="b={}_l={}_n={}_fold={}".format(batch_size, learning_rate, number_of_epochs, fold))
-    # perform training
+
+    criterion = nn.BCEWithLogitsLoss()
+    scaler = GradScaler()
+    model = model.to(device)
     for epoch in range(number_of_epochs):
-        show_figs = True
+        y_true, y_probs = run_epoch(model, optimizer, criterion, scaler, train_loader, train=True)
+        if epoch % 10 == 0:
+            compute_roc_curve(y_true, y_probs, plot=False)
 
-        # train
-        model.train()
-        torch.set_grad_enabled(True)
-        epoch_loss = 0
-        counter = -1
+    y_true_eval, y_probs_eval = run_epoch(model, optimizer, criterion, scaler, test_loader, train=False)
+    compute_roc_curve(y_true_eval, y_probs_eval, plot=True)
 
-        for data, ground_truth, path in train_loader:
-            counter += 1
-            if counter % 100 == 0:
-                gc.collect()
-                if show_figs:
-                    # Create a figure and axis objects for depth dimension (images of size 256x256)
-                    fig, axs = plt.subplots(4, 8, figsize=(12, 6))
-
-                    # Plot each slice of the tensor
-                    for i in range(4):
-                        for j in range(8):
-                            index = i * 8 + j
-                            axs[i, j].imshow(torch.clip(data[0, 0, index], 0, 100), cmap='gray', interpolation=None)
-                            axs[i, j].axis('off')
-                            title = path[0] if i == 0 and j == 0 else f"Slice {index}"
-                            axs[i, j].set_title(title)
-
-                    # Adjust layout and display the plot
-                    plt.tight_layout()
-                    plt.show()
-                    plt.close()
-
-            data = data.to(device)
-            ground_truth = ground_truth.to(device)
-            optimizer.zero_grad()
-            criterion = nn.BCEWithLogitsLoss()
-            scaler = GradScaler()
-
-            with torch.autocast(device_type=device, dtype=torch.float16):
-                pred_probs = model(data.float())
-                loss = criterion(pred_probs[:, 0].float(), ground_truth.float())
-
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
-
-            wandb.log({f"loss/train": loss.item()}, commit=False)
-            epoch_loss += loss.item()
-            print('Train step loss: {}'.format(loss.item()))
-
-        avg_epoch_loss = epoch_loss / len(train_loader)
-        print('Train {}: \tAverage Loss: {:.6f}'.format(
-            "Epoch " + str(epoch),
-            avg_epoch_loss))
-
-    # Evaluation
-    model.eval()
-    torch.set_grad_enabled(False)
-    epoch_loss = 0
-    counter = -1
-
-    for data, ground_truth, path in test_loader:
-        counter += 1
-        data = data.to(device)
-        ground_truth = ground_truth.to(device)
-        optimizer.zero_grad()
-        criterion = nn.BCEWithLogitsLoss()
-        scaler = GradScaler()
-
-        with torch.autocast(device_type=device, dtype=torch.float16):
-            pred_probs = model(data.float())
-            loss = criterion(pred_probs[:, 0].float(), ground_truth.float())
-
-        scaler.scale(loss).backward()
-        scaler.step(optimizer)
-        scaler.update()
-
-        wandb.log({f"loss/test": loss.item()}, commit=False)
-        epoch_loss += loss.item()
-        print('Test step loss: {}'.format(loss.item()))
-
-    avg_epoch_loss = epoch_loss / len(test_loader)
-    print('Test {}: \tAverage Loss: {:.6f}'.format(
-        "Epoch " + str(epoch),
-        avg_epoch_loss))
 
 
