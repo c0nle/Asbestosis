@@ -118,8 +118,10 @@ class X_rayImageDataset(Dataset):
 def run_epoch(model, optimizer, criterion, scaler, data_loader, train=True, show_figs=True):
     if train:
         model.train()
+        suffix = "train"
     else:
         model.eval()
+        suffix = "eval"
 
     torch.set_grad_enabled(train)
     epoch_loss = 0
@@ -153,11 +155,12 @@ def run_epoch(model, optimizer, criterion, scaler, data_loader, train=True, show
         y_true[batch_id][0:len(ground_truth)] = ground_truth
         y_probs[batch_id][0:len(ground_truth)] = pred_probs[:, 0]
 
-        wandb.log({f"loss/train": loss.item()}, commit=False)
+        wandb.log({f"loss/{suffix}": loss.item()}, commit=False)
         epoch_loss += loss.item()
-        print('Train step loss: {}'.format(loss.item()))
+        print('{} step loss: {}'.format(suffix, loss.item()))
     avg_epoch_loss = epoch_loss / len(data_loader)
-    print('Train {}: \tAverage Loss: {:.6f}'.format(
+    print('{} {}: \tAverage Loss: {:.6f}'.format(
+        suffix,
         "Epoch " + str(epoch),
         avg_epoch_loss))
     return y_true, y_probs
@@ -184,6 +187,8 @@ def compute_roc_curve(y_true, y_scores, plot=False, title_suffix=''):
     print(f"FPR: {fpr[best_index]}, TPR: {tpr[best_index]}")
     print(f"Specificity: {1 - fpr[best_index]}, Sensitivity: {tpr[best_index]}")
     roc_auc = auc(fpr, tpr)
+    auc_key = "AUC/" + title_suffix
+    wandb.log({auc_key: roc_auc})
 
     if plot:
         # ROC plot
@@ -208,7 +213,7 @@ def compute_roc_curve(y_true, y_scores, plot=False, title_suffix=''):
         wandb.log({
             roc_key: wandb.Image(plt),
             spec_key: 1 - fpr[best_index],
-            sens_key: tpr[best_index]
+            sens_key: tpr[best_index],
         })
         plt.close()
 
@@ -280,62 +285,65 @@ if __name__ == '__main__':
                                  fold_splitted_metadata_filename)
     else:
         metadata = pd.read_csv(fold_splitted_metadata_filename)
-    criterion_label = column_groups[column_group][0]
-    metadata = metadata[metadata[criterion_label] != -1]
-    test_metadata = metadata[metadata[f'Fold{fold}'] == 'test']
-    train_metadata = metadata[metadata[f'Fold{fold}'] == 'train']
 
-    current_train_metadata = train_metadata[[col for col in column_groups[column_group] if col in metadata.columns]]
-    current_test_metadata = test_metadata[[col for col in column_groups[column_group] if col in metadata.columns]]
+    prepared_metadata = metadata
+    for criterion_label in column_groups[column_group]:
+        if criterion_label in metadata.keys() and criterion_label not in column_groups["general"]:
+            metadata = prepared_metadata[prepared_metadata[criterion_label] != -1]
+            test_metadata = metadata[metadata[f'Fold{fold}'] == 'test']
+            train_metadata = metadata[metadata[f'Fold{fold}'] == 'train']
 
-    model = resnet50(weights=ResNet50_Weights)
-    model.conv1 = torch.nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+            current_train_metadata = train_metadata[[col for col in column_groups[column_group] if col in metadata.columns]]
+            current_test_metadata = test_metadata[[col for col in column_groups[column_group] if col in metadata.columns]]
 
-    num_classes = len(current_train_metadata.columns) - len(column_groups["general"])
-    model.fc = torch.nn.Linear(model.fc.in_features, num_classes)
+            model = resnet50(weights=ResNet50_Weights)
+            model.conv1 = torch.nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
 
-    # dataloader
-    n_workers = mp.cpu_count() if mp.cpu_count() < 25 else 24
-    gen = torch.Generator()
-    train_dataset = X_rayImageDataset(current_train_metadata, root_folder, label_column=criterion_label, transform=preprocess)
-    train_sampler = RandomSampler(train_dataset, replacement=False, generator=gen)
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False, num_workers=n_workers, sampler=train_sampler,
-                        generator=gen, drop_last=True, pin_memory=False)
+            num_classes = len(current_train_metadata.columns) - len(column_groups["general"])
+            model.fc = torch.nn.Linear(model.fc.in_features, num_classes)
 
-    test_dataset = X_rayImageDataset(current_test_metadata, root_folder, label_column=column_groups[column_group][0], transform=preprocess)
-    test_sampler = RandomSampler(test_dataset, replacement=False, generator=gen)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=n_workers, sampler=test_sampler,
-                        generator=gen, drop_last=True, pin_memory=False)
+            # dataloader
+            n_workers = mp.cpu_count() if mp.cpu_count() < 25 else 24
+            gen = torch.Generator()
+            train_dataset = X_rayImageDataset(current_train_metadata, root_folder, label_column=criterion_label, transform=preprocess)
+            train_sampler = RandomSampler(train_dataset, replacement=False, generator=gen)
+            train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False, num_workers=n_workers, sampler=train_sampler,
+                                generator=gen, drop_last=True, pin_memory=False)
 
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    optimizer = optim.AdamW(model.parameters(), lr=learning_rate)
+            test_dataset = X_rayImageDataset(current_test_metadata, root_folder, label_column=column_groups[column_group][0], transform=preprocess)
+            test_sampler = RandomSampler(test_dataset, replacement=False, generator=gen)
+            test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=n_workers, sampler=test_sampler,
+                                generator=gen, drop_last=True, pin_memory=False)
 
-    wandb.init(project="Asbest", config={
-        "learning-rate": learning_rate,
-        "dataset:": root_folder,
-        "split folder": fold_folder,
-        "number of training samples": len(train_loader.dataset),
-        "number of test samples": len(test_loader.dataset),
-        "epochs": number_of_epochs,
-        "batch size": batch_size,
-        "optimizer": str(optimizer),
-        "Augmentation": str(preprocess),
-        "Machine": "Local",
-        "Pretrained": str(ResNet50_Weights),
-        "train criteria": column_group,
-        "Fold": fold
-    }, name="b={}_l={}_n={}_fold={}".format(batch_size, learning_rate, number_of_epochs, fold))
+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+            optimizer = optim.AdamW(model.parameters(), lr=learning_rate)
 
-    criterion = nn.BCEWithLogitsLoss()
-    scaler = GradScaler()
-    model = model.to(device)
-    for epoch in range(number_of_epochs):
-        y_true, y_probs = run_epoch(model, optimizer, criterion, scaler, train_loader, train=True)
-        if epoch % 10 == 0:
-            compute_roc_curve(y_true, y_probs, plot=False)
+            wandb.init(project="Asbest", config={
+                "learning-rate": learning_rate,
+                "dataset:": root_folder,
+                "split folder": fold_folder,
+                "number of training samples": len(train_loader.dataset),
+                "number of test samples": len(test_loader.dataset),
+                "epochs": number_of_epochs,
+                "batch size": batch_size,
+                "optimizer": str(optimizer),
+                "Augmentation": str(preprocess),
+                "Machine": "HPC",
+                "Pretrained": str(ResNet50_Weights),
+                "train criteria": criterion_label,
+                "Fold": fold
+            }, name="b={}_l={}_n={}_fold={}".format(batch_size, learning_rate, number_of_epochs, fold))
 
-    y_true_eval, y_probs_eval = run_epoch(model, optimizer, criterion, scaler, test_loader, train=False)
-    compute_roc_curve(y_true_eval, y_probs_eval, plot=True)
+            criterion = nn.BCEWithLogitsLoss()
+            scaler = GradScaler()
+            model = model.to(device)
+            for epoch in range(number_of_epochs):
+                y_true, y_probs = run_epoch(model, optimizer, criterion, scaler, train_loader, train=True)
+                if epoch % 10 == 0:
+                    compute_roc_curve(y_true, y_probs, plot=False, title_suffix="train")
 
+            y_true_eval, y_probs_eval = run_epoch(model, optimizer, criterion, scaler, test_loader, train=False)
+            compute_roc_curve(y_true_eval, y_probs_eval, plot=True, title_suffix="test")
 
-
+            torch.save(model.state_dict(), os.path.join(base_folder, f'asbestosis_n{number_of_epochs}_b{batch_size}_label={criterion_label}.pth'))
+            wandb.finish()
