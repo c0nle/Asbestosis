@@ -17,7 +17,7 @@ import torch.multiprocessing as mp
 from torchvision.models import resnet101
 
 import utils
-from Asbestosis_Dataset import split_dash_containing_columns, get_Subjects
+from Preprocessor_Metadata import split_dash_containing_columns, get_Subjects
 
 CPU = "cpu"
 GPU = "cuda"

@@ -10,25 +10,29 @@ import pandas as pd
 import torchio as tio
 from PIL import Image
 import pydicom
+from sklearn.model_selection import StratifiedGroupKFold
+
 
 def encode_profusions(row, first_col, second_col):
     first, second = row[first_col], row[second_col]
     return first * 4 + (second - (first - 1))  # Mapping to unique integers
 
+
 def get_label_encoding(label_df):
     if "small_rounded_opacities_size_p" in label_df.keys():
-        label_encoding = pd.DataFrame(columns=["small_rounded_size",        # 0 - p=0,q=0; 1 - p=1,q=0; 2 - p=0,q=1; 3 - p=1,q=1
-                                              "small_rounded_profusion",    # 0 - 3 for 0/- til 1/0
-                                              "small_rounded_location",     # 0 - 63 for 64 different options of combinations
-                                              "small_irregular_size",       # 0 - 6 (s=1, t=0, u=1 never observed)
-                                              "small_irregular_profusion",  # 0 - 5 for 0/- til 1/2
-                                              "small_irregular_location",   # 0 - 63
-                                              "mixed_shape_1",              # 0 - p, 1 - q, 2 - s, 3 - t
-                                              "mixed_shape_2",              # 0 - r, 1 - u, 2 - s, 3 - t
-                                              "mixed_shape_profusion",      # 0 - 4 for 0/0 til 1/2
-                                              "mixed_shape_location",       # 0 - 63
-                                              "large_location"              # 0 - 63 (right middle, and left lower never observed)
-                                              ])
+        label_encoding = pd.DataFrame(
+            columns=["small_rounded_size",  # 0 - p=0,q=0; 1 - p=1,q=0; 2 - p=0,q=1; 3 - p=1,q=1
+                     "small_rounded_profusion",  # 0 - 3 for 0/- til 1/0
+                     "small_rounded_location",  # 0 - 63 for 64 different options of combinations
+                     "small_irregular_size",  # 0 - 6 (s=1, t=0, u=1 never observed)
+                     "small_irregular_profusion",  # 0 - 5 for 0/- til 1/2
+                     "small_irregular_location",  # 0 - 63
+                     "mixed_shape_1",  # 0 - p, 1 - q, 2 - s, 3 - t
+                     "mixed_shape_2",  # 0 - r, 1 - u, 2 - s, 3 - t
+                     "mixed_shape_profusion",  # 0 - 4 for 0/0 til 1/2
+                     "mixed_shape_location",  # 0 - 63
+                     "large_location"  # 0 - 63 (right middle, and left lower never observed)
+                     ])
 
         label_encoding['small_rounded_size'] = [
             0 if p == 0 and q == 0 and r == 0
@@ -43,7 +47,8 @@ def get_label_encoding(label_df):
                                label_df["small_rounded_opacities_size_q"],
                                label_df["small_rounded_opacities_size_r"])
         ]
-        label_encoding['small_rounded_profusion'] = label_df.apply(encode_profusions, axis=1, args=("small_rounded_opacities_profusion_first", "small_rounded_opacities_profusion_second"))
+        label_encoding['small_rounded_profusion'] = label_df.apply(encode_profusions, axis=1, args=(
+        "small_rounded_opacities_profusion_first", "small_rounded_opacities_profusion_second"))
         label_encoding['small_rounded_location'] = [
             # use bit represenation to encode all different options
             (int(ur) << 5) | (int(mr) << 4) | (int(lr) << 3) | (int(ul) << 2) | (int(ml) << 1) | int(ll)
@@ -71,7 +76,7 @@ def get_label_encoding(label_df):
                                label_df["small_irregular_opacities_size_u"])
         ]
         label_encoding['small_irregular_profusion'] = label_df.apply(encode_profusions, axis=1, args=(
-        "small_irregular_opacities_profusion_first", "small_irregular_opacities_profusion_second"))
+            "small_irregular_opacities_profusion_first", "small_irregular_opacities_profusion_second"))
         label_encoding['small_irregular_location'] = [
             # use bit represenation to encode all different options
             (int(ur) << 5) | (int(mr) << 4) | (int(lr) << 3) | (int(ul) << 2) | (int(ml) << 1) | int(ll)
@@ -143,17 +148,17 @@ def get_label_encoding(label_df):
 
     elif "costophrenic_angle_obliteration_nad" in label_df.keys():
         label_encoding = pd.DataFrame(["small_rounded_size",  # 0 - p=0,q=0; 1 - p=1,q=0; 2 - p=0,q=1; 3 - p=1,q=1
-                                      "small_rounded_profusion",  # 0 - 3 for 0/- til 1/0
-                                      "small_rounded_location",  # 0 - 63 for 64 different options of combinations
-                                      "small_irregular_size",  # 0 - 6 (s=1, t=0, u=1 never observed)
-                                      "small_irregular_profusion",  # 0 - 5 for 0/- til 1/2
-                                      "small_irregular_location",  # 0 - 63
-                                      "mixed_shape_1",  # 0 - p, 1 - q, 2 - s, 3 - t
-                                      "mixed_shape_2",  # 0 - r, 1 - u, 2 - s, 3 - t
-                                      "mixed_shape_profusion",  # 0 - 4 for 0/0 til 1/2
-                                      "mixed_shape_location",  # 0 - 63
-                                      "large_location",  # 0 - 63 (right middle, and left lower never observed)
-                                      ])
+                                       "small_rounded_profusion",  # 0 - 3 for 0/- til 1/0
+                                       "small_rounded_location",  # 0 - 63 for 64 different options of combinations
+                                       "small_irregular_size",  # 0 - 6 (s=1, t=0, u=1 never observed)
+                                       "small_irregular_profusion",  # 0 - 5 for 0/- til 1/2
+                                       "small_irregular_location",  # 0 - 63
+                                       "mixed_shape_1",  # 0 - p, 1 - q, 2 - s, 3 - t
+                                       "mixed_shape_2",  # 0 - r, 1 - u, 2 - s, 3 - t
+                                       "mixed_shape_profusion",  # 0 - 4 for 0/0 til 1/2
+                                       "mixed_shape_location",  # 0 - 63
+                                       "large_location",  # 0 - 63 (right middle, and left lower never observed)
+                                       ])
 
     return label_encoding.set_index(label_df.index)
 
@@ -218,7 +223,8 @@ def get_Subjects(path_root, feature_tensor):
 def split_dash_containing_columns(dataframe):
     for column in dataframe.columns:
         if dataframe[column].astype(str).str.contains("/").any():
-            dataframe[column + "_first"], dataframe[column + "_second"] = dataframe[column].apply(lambda x: pd.Series(split_at_dash(x)))
+            dataframe[column + "_first"], dataframe[column + "_second"] = dataframe[column].apply(
+                lambda x: pd.Series(split_at_dash(x)))
             dataframe.drop(column, axis=1, inplace=True)
     return dataframe
 
@@ -237,3 +243,114 @@ def split_at_dash(value):
         return first_val, second_val
     else:
         return np.nan, np.nan
+
+
+def create_splits(metadata: pd.DataFrame, n_testfolds: int, output_folder: str, output_filename: str):
+    if not os.path.exists(output_folder):
+        os.mkdir(output_folder)
+
+    for fold in range(n_testfolds):
+        metadata[f'Fold{fold}'] = ''
+    strat = StratifiedGroupKFold(n_splits=n_testfolds, shuffle=True, random_state=0)
+    for n_fold, test_fold in enumerate(
+            strat.split(metadata, y=metadata['technical_quality'], groups=metadata['medicoID'])):
+        train_split = metadata.loc[test_fold[0]]
+        test_split = metadata.loc[test_fold[1]]
+
+        test_split.to_csv(output_folder + "stratified_test_set-f{}.csv".format(n_fold), index=False)
+        train_split.to_csv(output_folder + "stratified_train_set-f{}.csv".format(n_fold), index=False)
+
+        metadata.loc[metadata['medicoID'].isin(test_split['medicoID']), f'Fold{n_fold}'] = 'test'
+        metadata.loc[metadata['medicoID'].isin(train_split['medicoID']), f'Fold{n_fold}'] = 'train'
+    metadata.to_csv(output_filename)
+    return metadata
+
+
+def get_column_name_groups(metadata: pd.DataFrame):
+    general_columns = ['Nachname', 'Vorname', 'Geburtsdatum', 'medicoID', 'Untersuchungsdatum',
+                       'Untersuchung_Ort', 'Untersuchung_Art', 'id', 'Untersuchung_id',
+                       'technical_quality', "medicoID_y", "fileID"]
+    symbol_columns = [col for col in metadata.columns if col.startswith('symbol_')]
+    symbol_columns.extend(general_columns)
+
+    rounded_columns = [col for col in metadata.columns if col.startswith('small_rounded_')]
+    rounded_columns.extend(general_columns)
+
+    irregular_columns = [col for col in metadata.columns if col.startswith('small_irregular_')]
+    irregular_columns.extend(general_columns)
+
+    mixed_columns = [col for col in metadata.columns if col.startswith('mixed_')]
+    mixed_columns.extend(general_columns)
+
+    large_columns = [col for col in metadata.columns if col.startswith('large_')]
+    large_columns.extend(general_columns)
+    large_columns.extend(["costophrenic_angle_obliteration_nad", "costophrenic_angle_obliteration_right",
+                          "costophrenic_angle_obliteration_left"])
+
+    pleural_columns = [col for col in metadata.columns if 'pleural' in col]
+    pleural_columns.extend(general_columns)
+
+    occupation_columns = [col for col in metadata.columns if col.startswith('occupational_disease_')]
+    occupation_columns.extend(general_columns)
+
+    return {"general": general_columns,
+            "symbol": symbol_columns,
+            "rounded": rounded_columns,
+            "irregular": irregular_columns,
+            "mixed": mixed_columns,
+            "large": large_columns,
+            "pleural": pleural_columns,
+            "occupational": occupation_columns}
+
+
+def prepare_metadata(metadata_file: str, anforderungsnr_file: str, mapping_file: str,
+                     maximum_occurance_of_nans_per_col: int):
+    # Step1: Read files and merge to get correct AnforderungsNummern
+    metadata = pd.read_csv(metadata_file)
+    metadata['Geburtsdatum'] = pd.to_datetime(metadata['Geburtsdatum'], format='%d.%m.%Y')
+    metadata['Untersuchungsdatum'] = pd.to_datetime(metadata['Untersuchungsdatum'], format='%d.%m.%Y')
+
+    anford_nr = pd.read_csv(anforderungsnr_file,
+                            usecols=["Name", "Vorname", "Geburtsdatum", "Anforderungsnummer", "Untersuchungsdatum"])
+    anford_nr.rename(columns={"Name": "Nachname"}, inplace=True)
+    anford_nr['Geburtsdatum'] = pd.to_datetime(anford_nr['Geburtsdatum'], format='%m/%d/%Y')  # '%Y-%m-%d'
+    anford_nr['Untersuchungsdatum'] = pd.to_datetime(anford_nr['Untersuchungsdatum'], format='%m/%d/%Y')
+
+    metadata = metadata.merge(anford_nr, "inner", ["Nachname", "Vorname", "Geburtsdatum", "Untersuchungsdatum"])
+    mapping = pd.read_csv(mapping_file)
+    mapping["medicoID"] = mapping["medicoID"].astype(str).apply(lambda x: x[:-4])
+    metadata["Anforderungsnummer_y"] = metadata["Anforderungsnummer_y"].astype(str)  # .apply(lambda x: x[:-2])
+    metadata = metadata.merge(mapping, "inner", left_on="Anforderungsnummer_y", right_on="medicoID")
+    metadata.rename(columns={"Anforderungsnummer_y": "Anforderungsnummer", "medicoID_x": "medicoID"}, inplace=True)
+
+    # Step2: replace nan entries with -1
+    metadata.fillna(-1, inplace=True)
+
+    # Step3: map values for columns containing values like 0/0
+    slash_value_mapping = {"0/-": -0.25, "1/-": 0.25, "2/-": 1.25, "3/-": 2.25,
+                           "0/0": 0, "0/1": 0.5,
+                           "1/0": 0.75, "1/1": 1, "1/2": 1.5,
+                           "2/1": 1.75, "2/2": 2, "2/3": 2.5,
+                           "3/2": 2.75, "3/3": 3, "3/4": 3.5,
+                           "4/3": 3.75, "4/4": 4}
+    metadata['small_rounded_opacities_profusion_map'] = metadata[
+        'small_rounded_opacities_profusion'].map(slash_value_mapping)
+    metadata['small_irregular_opacities_profusion_map'] = metadata[
+        'small_irregular_opacities_profusion'].map(slash_value_mapping)
+    metadata['mixed_shapes_profusion_map'] = metadata['mixed_shapes_profusion'].map(
+        slash_value_mapping)
+
+    # Step4: drop all columns that are not needed for training
+    col_to_drop = ["medicoID_y", "mixed_shapes_profusion", "small_irregular_opacities_profusion", "small_rounded_opacities_profusion"]
+    # find other columns to drop: all that have more nan entries than nan_thresh
+    nan_per_column_count = [(col_name, len(metadata[metadata[col_name] != metadata[col_name]])) for col_name in
+                            metadata.columns]
+    for col_name, nan_count in nan_per_column_count:
+        if nan_count > maximum_occurance_of_nans_per_col:
+            col_to_drop.append(col_name)
+    metadata.drop(columns=col_to_drop, inplace=True)
+    print("Dropped following columns because they contained at least " + str(
+        int(maximum_occurance_of_nans_per_col / len(metadata) * 100)) + " % nan-values.")
+    print(col_to_drop[1:])
+    metadata.to_csv(metadata_file.replace('.csv', '_prepared.csv'), index=False)
+    return metadata

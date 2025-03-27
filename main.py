@@ -14,7 +14,10 @@ from sklearn.model_selection import StratifiedGroupKFold
 from sklearn.metrics import roc_curve, auc
 
 import matplotlib.pyplot as plt
+
+import Preprocessor_Metadata
 import wandb
+from Preprocessor_Metadata import create_splits
 
 
 class MultiOutputResNet(nn.Module):
@@ -33,61 +36,6 @@ class MultiOutputResNet(nn.Module):
         x = self.resnet(x)
         return [head(x) for head in self.output_heads]  # Return multiple outputs
 
-def create_splits(metadata: pd.DataFrame, n_testfolds: int, output_folder: str, output_filename: str):
-    if not os.path.exists(output_folder):
-        os.mkdir(output_folder)
-
-    for fold in range(n_testfolds):
-        metadata[f'Fold{fold}'] = ''
-    strat = StratifiedGroupKFold(n_splits=n_testfolds, shuffle=True, random_state=0)
-    for n_fold, test_fold in enumerate(
-            strat.split(metadata, y=metadata['technical_quality'], groups=metadata['medicoID'])):
-        train_split = metadata.loc[test_fold[0]]
-        test_split = metadata.loc[test_fold[1]]
-
-        test_split.to_csv(output_folder + "stratified_test_set-f{}.csv".format(n_fold), index=False)
-        train_split.to_csv(output_folder + "stratified_train_set-f{}.csv".format(n_fold), index=False)
-
-        metadata.loc[metadata['medicoID'].isin(test_split['medicoID']), f'Fold{n_fold}'] = 'test'
-        metadata.loc[metadata['medicoID'].isin(train_split['medicoID']), f'Fold{n_fold}'] = 'train'
-    metadata.to_csv(output_filename)
-    return metadata
-
-def get_column_name_groups(metadata: pd.DataFrame):
-    general_columns = ['Nachname', 'Vorname', 'Geburtsdatum', 'medicoID', 'Untersuchungsdatum',
-                       'Untersuchung_Ort', 'Untersuchung_Art', 'id', 'Untersuchung_id',
-                       'technical_quality', "medicoID_y", "fileID"]
-    symbol_columns = [col for col in metadata.columns if col.startswith('symbol_')]
-    symbol_columns.extend(general_columns)
-
-    rounded_columns = [col for col in metadata.columns if col.startswith('small_rounded_')]
-    rounded_columns.extend(general_columns)
-
-    irregular_columns = [col for col in metadata.columns if col.startswith('small_irregular_')]
-    irregular_columns.extend(general_columns)
-
-    mixed_columns = [col for col in metadata.columns if col.startswith('mixed_')]
-    mixed_columns.extend(general_columns)
-
-    large_columns = [col for col in metadata.columns if col.startswith('large_')]
-    large_columns.extend(general_columns)
-    large_columns.extend(["costophrenic_angle_obliteration_nad", "costophrenic_angle_obliteration_right",
-                          "costophrenic_angle_obliteration_left"])
-
-    pleural_columns = [col for col in metadata.columns if 'pleural' in col]
-    pleural_columns.extend(general_columns)
-
-    occupation_columns = [col for col in metadata.columns if col.startswith('occupational_disease_')]
-    occupation_columns.extend(general_columns)
-
-    return {"general": general_columns,
-            "symbol": symbol_columns,
-            "rounded": rounded_columns,
-            "irregular": irregular_columns,
-            "mixed": mixed_columns,
-            "large": large_columns,
-            "pleural": pleural_columns,
-            "occupational": occupation_columns}
 
 class X_rayImageDataset(Dataset):
     def __init__(self, annotations, img_dir, label_column: str, transform=None):
@@ -229,9 +177,9 @@ if __name__ == '__main__':
     ])
 
     # Datenvorverarbeitung: fehlende Werte handeln; einlesen
-    base_folder = "/hpcwork/it336446/Data/DeboraThorax/" # "D:\\Projects\\Thorax\\DeboraThorax\\png\\"
+    base_folder = "D:\\Projects\\Thorax\\DeboraThorax\\"  #" "/hpcwork/it336446/Data/DeboraThorax/"
     root_folder = base_folder + "png/" 
-    mapping_file = base_folder + "mapping.csv"  # "D:\\Projects\\Thorax\\mapping.csv"
+    mapping_file = base_folder + "mapping.csv"
     fold_folder = base_folder + "split_folds/"
 
     metadata_file = base_folder + "merged_data.csv"
@@ -244,41 +192,10 @@ if __name__ == '__main__':
     # column_groups keys are general, symbol, rounded, irregular, mixed, large, pleural, occupational
     column_group = "pleural"
 
-    metadata = pd.read_csv(metadata_file)
-    metadata['Geburtsdatum'] = pd.to_datetime(metadata['Geburtsdatum'], format='%d.%m.%Y')
-    metadata['Untersuchungsdatum'] = pd.to_datetime(metadata['Untersuchungsdatum'], format='%d.%m.%Y')
-
-    anford_nr = pd.read_csv(anford_nr_file,
-                                usecols=["Name", "Vorname", "Geburtsdatum", "Anforderungsnummer", "Untersuchungsdatum"])
-    anford_nr.rename(columns={"Name": "Nachname"}, inplace=True)
-    anford_nr['Geburtsdatum'] = pd.to_datetime(anford_nr['Geburtsdatum'], format='%m/%d/%Y')  # '%Y-%m-%d'
-    anford_nr['Untersuchungsdatum'] = pd.to_datetime(anford_nr['Untersuchungsdatum'], format='%m/%d/%Y')
-
-    metadata = metadata.merge(anford_nr, "inner", ["Nachname", "Vorname", "Geburtsdatum", "Untersuchungsdatum"])
-    mapping = pd.read_csv(mapping_file)
-    mapping["medicoID"] = mapping["medicoID"].astype(str).apply(lambda x: x[:-4])
-    metadata["Anforderungsnummer_y"] = metadata["Anforderungsnummer_y"].astype(str) # .apply(lambda x: x[:-2])
-    metadata = metadata.merge(mapping, "inner", left_on="Anforderungsnummer_y", right_on="medicoID")
-    metadata.rename(columns={"Anforderungsnummer_y": "Anforderungsnummer", "medicoID_x": "medicoID"}, inplace=True)
-
-    column_groups = get_column_name_groups(metadata)  # group columns into logical
-
-    col_to_drop = ["medicoID_y"]
-    # find other columns to drop: all that have more nan entries than nan_thresh
-    nan_per_column_count = [(col_name, len(metadata[metadata[col_name] != metadata[col_name]])) for col_name in metadata.columns]
-    for col_name, nan_count in nan_per_column_count:
-        if nan_count > nan_thresh:
-            col_to_drop.append(col_name)
-    metadata.drop(columns=col_to_drop, inplace=True)
-    print("Dropped following columns because they contained at least " + str(int(nan_thresh/len(metadata) * 100)) + " % nan-values.")
-    print(col_to_drop[1:])
-
-    # replace nan entries with -1
-    metadata.fillna(-1, inplace=True)
-
     # Split Train-Test:
     fold_splitted_metadata_filename = fold_folder + metadata_file.split(os.sep)[-1].replace('.csv', '_stratified_folds.csv')
     if not os.path.isfile(fold_splitted_metadata_filename):
+        metadata = Preprocessor_Metadata.prepare_metadata(metadata_file, anford_nr_file, mapping_file, nan_thresh)
         metadata = create_splits(metadata,
                                  5,
                                  fold_folder,
@@ -287,6 +204,8 @@ if __name__ == '__main__':
         metadata = pd.read_csv(fold_splitted_metadata_filename)
 
     prepared_metadata = metadata
+    column_groups = Preprocessor_Metadata.get_column_name_groups(metadata)  # group columns into logical
+
     for criterion_label in column_groups[column_group]:
         if criterion_label in metadata.keys() and criterion_label not in column_groups["general"]:
             metadata = prepared_metadata[prepared_metadata[criterion_label] != -1]
@@ -332,9 +251,9 @@ if __name__ == '__main__':
                 "Pretrained": str(ResNet50_Weights),
                 "train criteria": criterion_label,
                 "Fold": fold
-            }, name="b={}_l={}_n={}_fold={}".format(batch_size, learning_rate, number_of_epochs, fold))
+            }, name="b={}_l={}_n={}_fold={}_{}_prepMeta".format(batch_size, learning_rate, number_of_epochs, fold, criterion_label))
 
-            criterion = nn.BCEWithLogitsLoss()
+            criterion = nn.BCEWithLogitsLoss() if len(prepared_metadata['lateral_exposure'].unique()) == 2 else nn.CrossEntropyLoss()
             scaler = GradScaler()
             model = model.to(device)
             for epoch in range(number_of_epochs):
