@@ -354,3 +354,72 @@ def prepare_metadata(metadata_file: str, anforderungsnr_file: str, mapping_file:
     print(col_to_drop[1:])
     metadata.to_csv(metadata_file.replace('.csv', '_prepared.csv'), index=False)
     return metadata
+
+
+def shorten_name(sheet_name):
+    shortended_name = sheet_name.replace("thickening", "thick")
+    shortended_name = shortended_name.replace("right", "r")
+    shortended_name = shortended_name.replace("left", "l")
+    shortended_name = shortended_name.replace("localized", "loc")
+    shortended_name = shortended_name.replace("calcification", "calcif")
+    return shortended_name
+
+
+def create_individual_metadata_files(overall_metadata_file: str):
+    metadata = pd.read_csv(overall_metadata_file)
+    metadata['Geburtsdatum'] = pd.to_datetime(metadata['Geburtsdatum'], format='%Y-%m-%d')
+    metadata['Untersuchungsdatum'] = pd.to_datetime(metadata['Untersuchungsdatum'], format='%Y-%m-%d')
+
+    sub_metadatas = {}
+    metadata_lengths = []
+    new_filename = overall_metadata_file.replace(overall_metadata_file.split(os.sep)[-1], 'metadata_subset.xlsx')
+    for column_name in metadata.columns:
+        if "pleura" in column_name:
+            column_metadata = metadata[metadata[column_name] != -1]
+            sheet_name = shorten_name(column_name)
+            sub_metadatas[sheet_name] = column_metadata
+            if column_name == "localized_pleural_thickening_width_left" or column_name == "localized_pleural_thickening_width_right":
+                c_value = "c" if column_name.endswith("_right") else "C"
+                # options are a, b, C
+                metadata_lengths.append({'Sheet': sheet_name,
+                                         "Column name": column_name,
+                                         'Number of entries': len(column_metadata),
+                                         'Positive samples': 0, 'Negative samples': 0,
+                                         "a/1": len(column_metadata[column_metadata[column_name] == "a"]),
+                                         "b/2": len(column_metadata[column_metadata[column_name] == "b"]),
+                                         "c/3": len(column_metadata[column_metadata[column_name] == c_value])})
+
+            elif column_name == "localized_pleural_thickening_extent_left" or column_name == "localized_pleural_thickening_extent_right":
+                # options are 1, 2, 3
+                metadata_lengths.append({'Sheet': sheet_name,
+                                         "Column name": column_name,
+                                         'Number of entries': len(column_metadata),
+                                         'Positive samples': 0, 'Negative samples': 0,
+                                         "a/1": len(column_metadata[column_metadata[column_name] == 1]),
+                                         "b/2": len(column_metadata[column_metadata[column_name] == 2]),
+                                         "c/3": len(column_metadata[column_metadata[column_name] == 3])})
+            elif column_name == "diffuse_pleural_thickening_width_right" or column_name == "diffuse_pleural_thickening_width_left":
+                metadata_lengths.append({'Sheet': sheet_name,
+                                         "Column name": column_name,
+                                         'Number of entries': len(column_metadata),
+                                         'Positive samples': 0, 'Negative samples': 0,
+                                         "a/1": len(column_metadata[column_metadata[column_name] == "a"]),
+                                         "b/2": len(column_metadata[column_metadata[column_name] == "b"]),
+                                         "c/3": "-"})
+            else:
+                metadata_lengths.append({'Sheet': sheet_name,
+                                         "Column name": column_name,
+                                         'Number of entries': len(column_metadata),
+                                         'Positive samples': len(column_metadata[column_metadata[column_name] == 1]),
+                                         'Negative samples': len(column_metadata[column_metadata[column_name] == 0]),
+                                         "a/1": 0, "b/2": 0, "c/3": 0})
+
+    with pd.ExcelWriter(new_filename) as writer:
+        for sheet_name, dataframe in sub_metadatas.items():
+            dataframe.to_excel(writer, sheet_name=sheet_name, index=False)
+        pd.DataFrame(metadata_lengths).to_excel(writer, sheet_name="Number of entries per sheet", index=False)
+
+if __name__ == "__main__":
+    overall_filename = "D:\\Projects\\Thorax\\DeboraThorax\\split_folds\\merged_data_stratified_folds.csv"
+    create_individual_metadata_files(overall_filename)
+

@@ -57,7 +57,7 @@ class X_rayImageDataset(Dataset):
     def __getitem__(self, idx):
         img_path = self.img_dir + str(int(self.img_labels.iloc[idx]['fileID'])) + '-IM_0001.png'
         image = PIL.Image.open(img_path)
-        label = self.img_labels.iloc[idx][self.label_column]
+        label = float(self.img_labels.iloc[idx][self.label_column])
         if self.transform:
             image = self.transform(image)
         return image, label, img_path
@@ -207,14 +207,17 @@ if __name__ == '__main__':
     column_groups = Preprocessor_Metadata.get_column_name_groups(metadata)  # group columns into logical
 
     for criterion_label in column_groups[column_group]:
+        criterion_label = "diffuse_pleural_thickening_extent_right"  #  diffuse_pleural_thickening_nad
         if criterion_label in metadata.keys() and criterion_label not in column_groups["general"]:
             metadata = prepared_metadata[prepared_metadata[criterion_label] != -1]
             test_metadata = metadata[metadata[f'Fold{fold}'] == 'test']
             train_metadata = metadata[metadata[f'Fold{fold}'] == 'train']
+            #print(criterion_label + ":\n\ttrain --- pos: " + str(len(train_metadata[train_metadata[criterion_label] == 1])) + " neg: " + str(len(train_metadata[train_metadata[criterion_label] == 0])) +
+            #      "\n\ttest --- pos: " + str(len(test_metadata[test_metadata[criterion_label] == 1])) + " neg: " + str(len(test_metadata[test_metadata[criterion_label] == 0])))
 
             current_train_metadata = train_metadata[[col for col in column_groups[column_group] if col in metadata.columns]]
             current_test_metadata = test_metadata[[col for col in column_groups[column_group] if col in metadata.columns]]
-
+            is_binary_classification = len(prepared_metadata[criterion_label].unique()) == 2
             model = resnet50(weights=ResNet50_Weights)
             model.conv1 = torch.nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
 
@@ -227,12 +230,12 @@ if __name__ == '__main__':
             train_dataset = X_rayImageDataset(current_train_metadata, root_folder, label_column=criterion_label, transform=preprocess)
             train_sampler = RandomSampler(train_dataset, replacement=False, generator=gen)
             train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False, num_workers=n_workers, sampler=train_sampler,
-                                generator=gen, drop_last=True, pin_memory=False)
+                               generator=gen, drop_last=True, pin_memory=False)
 
             test_dataset = X_rayImageDataset(current_test_metadata, root_folder, label_column=column_groups[column_group][0], transform=preprocess)
             test_sampler = RandomSampler(test_dataset, replacement=False, generator=gen)
             test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=n_workers, sampler=test_sampler,
-                                generator=gen, drop_last=True, pin_memory=False)
+                               generator=gen, drop_last=True, pin_memory=False)
 
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
             optimizer = optim.AdamW(model.parameters(), lr=learning_rate)
@@ -253,16 +256,17 @@ if __name__ == '__main__':
                 "Fold": fold
             }, name="b={}_l={}_n={}_fold={}_{}_prepMeta".format(batch_size, learning_rate, number_of_epochs, fold, criterion_label))
 
-            criterion = nn.BCEWithLogitsLoss() if len(prepared_metadata['lateral_exposure'].unique()) == 2 else nn.CrossEntropyLoss()
+            criterion = nn.BCEWithLogitsLoss() if is_binary_classification else nn.CrossEntropyLoss()
             scaler = GradScaler()
             model = model.to(device)
             for epoch in range(number_of_epochs):
                 y_true, y_probs = run_epoch(model, optimizer, criterion, scaler, train_loader, train=True)
-                if epoch % 10 == 0:
+                if epoch % 10 == 0 and is_binary_classification:
                     compute_roc_curve(y_true, y_probs, plot=False, title_suffix="train")
 
             y_true_eval, y_probs_eval = run_epoch(model, optimizer, criterion, scaler, test_loader, train=False)
-            compute_roc_curve(y_true_eval, y_probs_eval, plot=True, title_suffix="test")
+            if is_binary_classification:
+                compute_roc_curve(y_true_eval, y_probs_eval, plot=True, title_suffix="test")
 
             torch.save(model.state_dict(), os.path.join(base_folder, f'asbestosis_n{number_of_epochs}_b{batch_size}_label={criterion_label}.pth'))
             wandb.finish()
