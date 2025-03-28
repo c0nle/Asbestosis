@@ -42,7 +42,7 @@ class X_rayImageDataset(Dataset):
         self.img_labels = self.get_available_data(annotations)
         self.transform = transform
         self.label_column = label_column
-        self.num_classes = len(self.img_labels[self.label_column].unique())
+        self.hot_encodings = np.eye(len(self.img_labels[self.label_column].unique()))
 
     def get_available_data(self, annotations):
         available_annotations = []
@@ -57,8 +57,8 @@ class X_rayImageDataset(Dataset):
     def __getitem__(self, idx):
         img_path = self.img_dir + str(int(self.img_labels.iloc[idx]['fileID'])) + '-IM_0001.png'
         image = PIL.Image.open(img_path)
-        label = float(self.img_labels.iloc[idx][self.label_column])
-        label = np.eye(self.num_classes)[label].tolist() # one hot encoding for label
+        label = int(self.img_labels.iloc[idx][self.label_column])
+        label = self.hot_encodings[label].tolist() # one hot encoding for label
         if self.transform:
             image = self.transform(image)
         return image, label, img_path
