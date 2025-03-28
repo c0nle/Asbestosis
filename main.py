@@ -42,6 +42,7 @@ class X_rayImageDataset(Dataset):
         self.img_labels = self.get_available_data(annotations)
         self.transform = transform
         self.label_column = label_column
+        self.num_classes = len(self.img_labels[self.label_column].unique())
 
     def get_available_data(self, annotations):
         available_annotations = []
@@ -57,6 +58,7 @@ class X_rayImageDataset(Dataset):
         img_path = self.img_dir + str(int(self.img_labels.iloc[idx]['fileID'])) + '-IM_0001.png'
         image = PIL.Image.open(img_path)
         label = float(self.img_labels.iloc[idx][self.label_column])
+        label = np.eye(self.num_classes)[label].tolist() # one hot encoding for label
         if self.transform:
             image = self.transform(image)
         return image, label, img_path
@@ -100,7 +102,7 @@ def run_epoch(model, optimizer, criterion, scaler, data_loader, train=True, show
             scaler.update()
 
         y_true[batch_id][0:len(ground_truth)] = ground_truth
-        y_probs[batch_id][0:len(ground_truth)] = pred_probs[:, 0]
+        y_probs[batch_id][0:len(ground_truth)] = pred_probs
 
         wandb.log({f"loss/{suffix}": loss.item()}, commit=False)
         epoch_loss += loss.item()
@@ -203,12 +205,12 @@ if __name__ == '__main__':
     ])
 
     # Datenvorverarbeitung: fehlende Werte handeln; einlesen
-    base_folder = "/hpcwork/it336446/Data/DeboraThorax/"  # "D:\\Projects\\Thorax\\DeboraThorax\\"
+    base_folder = "D:\\Projects\\Thorax\\DeboraThorax\\" # "/hpcwork/it336446/Data/DeboraThorax/"  #
     root_folder = base_folder + "png/" 
     mapping_file = base_folder + "mapping.csv"
     fold_folder = base_folder + "split_folds/"
 
-    metadata_file = base_folder + "merged_data_prepared.csv"
+    metadata_file = base_folder + "merged_data.csv"
     anford_nr_file = base_folder + "table.csv"
     nan_thresh = 999
     batch_size = 16
@@ -243,7 +245,7 @@ if __name__ == '__main__':
 
             current_train_metadata = train_metadata[[col for col in column_groups[column_group] if col in metadata.columns]]
             current_test_metadata = test_metadata[[col for col in column_groups[column_group] if col in metadata.columns]]
-            num_classes = len(prepared_metadata[criterion_label].unique())
+            num_classes = len(metadata[criterion_label].unique())
             is_binary_classification = num_classes == 2
             model = resnet50() #weights=ResNet50_Weights)
 
