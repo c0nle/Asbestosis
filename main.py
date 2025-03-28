@@ -76,8 +76,8 @@ def run_epoch(model, optimizer, criterion, scaler, data_loader, train=True, show
     epoch_loss = 0
     counter = -1
     set_length = len(data_loader)
-    y_true = torch.zeros((set_length, batch_size), dtype=torch.int)  # true labels
-    y_probs = torch.zeros((set_length, batch_size), dtype=torch.float)  # predicted probabilities for cancer
+    y_true = torch.zeros((set_length, batch_size, len(data_loader.dataset.hot_encodings)), dtype=torch.int)  # true labels
+    y_probs = torch.zeros((set_length, batch_size, len(data_loader.dataset.hot_encodings)), dtype=torch.float)  # predicted probabilities for cancer
     for batch_id, (data, ground_truth, path) in enumerate(data_loader):
         counter += 1
         if counter % 100 == 0:
@@ -95,14 +95,14 @@ def run_epoch(model, optimizer, criterion, scaler, data_loader, train=True, show
 
         with torch.autocast(device_type=device, dtype=torch.float16):
             pred_probs = model(data)
-            loss = criterion(pred_probs[:, 0], ground_truth)  #TODO
+            loss = criterion(pred_probs, ground_truth)  #TODO
         if train:
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
 
-        y_true[batch_id][0:len(ground_truth)] = ground_truth
-        y_probs[batch_id][0:len(ground_truth)] = pred_probs
+        y_true[batch_id] = ground_truth
+        y_probs[batch_id] = pred_probs
 
         wandb.log({f"loss/{suffix}": loss.item()}, commit=False)
         epoch_loss += loss.item()
@@ -205,7 +205,7 @@ if __name__ == '__main__':
     ])
 
     # Datenvorverarbeitung: fehlende Werte handeln; einlesen
-    base_folder = "/hpcwork/it336446/Data/DeboraThorax/"  # "D:\\Projects\\Thorax\\DeboraThorax\\" # 
+    base_folder = "D:\\Projects\\Thorax\\DeboraThorax\\"  #  "/hpcwork/it336446/Data/DeboraThorax/"  #
     root_folder = base_folder + "png/" 
     mapping_file = base_folder + "mapping.csv"
     fold_folder = base_folder + "split_folds/"
