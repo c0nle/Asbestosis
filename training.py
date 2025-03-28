@@ -37,6 +37,7 @@ def get_logging_metrices():
 
 
 def train_epoch(data_loader, model, optimizer, criterion, DEVICE, logging_metrices, epoch_number=0):
+    torch.cuda.memory_summary(device=None, abbreviated=False)
     start = time.time()
     model.train()
     torch.set_grad_enabled(True)
@@ -186,7 +187,8 @@ def get_dataloader(training_feature, lung_train, pleura_train, symbol_train, lun
 
 
 if __name__ == "__main__":
-    path_root = "/home/debora/Documents/Data/DeboraThorax/png/"
+    path_root = "/hpcwork/p0020933/workspace_debora/Data/Thorax_data/"
+    feature_file_path = "/hpcwork/p0020933/workspace_debora/Data/found_merged_data.xlsx"  # "/hpcwork/it336446/Data/found_merged_data.xlsx"
     training_feature = "lung"
     batch_size = 4
     number_of_epochs = 80
@@ -226,7 +228,7 @@ if __name__ == "__main__":
     # evaluation metrics:
     logging_metrices = get_logging_metrices()
 
-    lung_train, pleura_train, symbol_train, lung_eval, pleura_eval, symbol_eval, lung_test, pleura_test, symbol_test = utils.get_feature_tensor("/home/debora/Documents/Projects/Thorax/found_merged_data.xlsx", train_fraction=0.7, evaluation_fraction=0.5)
+    lung_train, pleura_train, symbol_train, lung_eval, pleura_eval, symbol_eval, lung_test, pleura_test, symbol_test = utils.get_feature_tensor(feature_file_path, train_fraction=0.7, evaluation_fraction=0.5)
 
     for data_set in [lung_train, pleura_train, symbol_train, lung_eval, pleura_eval, symbol_eval, lung_test, pleura_test, symbol_test]:
         split_dash_containing_columns(data_set)

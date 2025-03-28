@@ -10,14 +10,13 @@ from torch.utils.data import Dataset, RandomSampler, DataLoader
 from torchvision.models import resnet50, ResNet50_Weights
 from torchvision.transforms import transforms
 import torch.multiprocessing as mp
-from sklearn.model_selection import StratifiedGroupKFold
-from sklearn.metrics import roc_curve, auc
-
+from sklearn.metrics import RocCurveDisplay, roc_curve, auc
+from sklearn.preprocessing import LabelBinarizer
+from itertools import cycle
 import matplotlib.pyplot as plt
 
 import Preprocessor_Metadata
 import wandb
-from Preprocessor_Metadata import create_splits
 
 
 class MultiOutputResNet(nn.Module):
@@ -94,7 +93,7 @@ def run_epoch(model, optimizer, criterion, scaler, data_loader, train=True, show
 
         with torch.autocast(device_type=device, dtype=torch.float16):
             pred_probs = model(data)
-            loss = criterion(pred_probs[:, 0], ground_truth)
+            loss = criterion(pred_probs, ground_truth)  #[:, 0]
         if train:
             scaler.scale(loss).backward()
             scaler.step(optimizer)
@@ -112,6 +111,33 @@ def run_epoch(model, optimizer, criterion, scaler, data_loader, train=True, show
         "Epoch " + str(epoch),
         avg_epoch_loss))
     return y_true, y_probs
+
+def compute_roc_one_vs_rest(y_true, y_scores, classes, category_label):
+    label_binarizer = LabelBinarizer().fit(y_scores)
+    y_onehot_test = label_binarizer.transform(y_true)
+    fpr, tpr, _ = roc_curve(y_onehot_test.ravel(), y_scores.ravel())
+    roc_auc_value = auc(fpr, tpr)
+    wandb.log({"multi_roc_auc/" + category_label: roc_auc_value})
+
+    fig, ax = plt.subplots(figsize=(6, 6))
+    colors = cycle(["aqua", "darkorange", "cornflowerblue"])
+    for class_id, color in zip(classes, colors):
+        RocCurveDisplay.from_predictions(
+            y_onehot_test[:, class_id],
+            y_scores[:, class_id],
+            name=f"ROC curve for {str(class_id)}",
+            color=color,
+            ax=ax,
+            plot_chance_level=(class_id == 2),
+            despine=True,
+        )
+
+    _ = ax.set(
+        xlabel="False Positive Rate",
+        ylabel="True Positive Rate",
+        title="Receiver Operating Characteristic (One-vs-Rest multiclass) for " + category_label,
+    )
+
 
 def compute_roc_curve(y_true, y_scores, plot=False, title_suffix=''):
     """
@@ -177,17 +203,17 @@ if __name__ == '__main__':
     ])
 
     # Datenvorverarbeitung: fehlende Werte handeln; einlesen
-    base_folder = "D:\\Projects\\Thorax\\DeboraThorax\\"  #" "/hpcwork/it336446/Data/DeboraThorax/"
+    base_folder = "/hpcwork/it336446/Data/DeboraThorax/"  # "D:\\Projects\\Thorax\\DeboraThorax\\"
     root_folder = base_folder + "png/" 
     mapping_file = base_folder + "mapping.csv"
     fold_folder = base_folder + "split_folds/"
 
-    metadata_file = base_folder + "merged_data.csv"
+    metadata_file = base_folder + "merged_data_prepared.csv"
     anford_nr_file = base_folder + "table.csv"
     nan_thresh = 999
     batch_size = 16
     learning_rate = 0.0001
-    number_of_epochs = 20
+    number_of_epochs = 1 # 40
     fold = 0
     # column_groups keys are general, symbol, rounded, irregular, mixed, large, pleural, occupational
     column_group = "pleural"
@@ -196,7 +222,7 @@ if __name__ == '__main__':
     fold_splitted_metadata_filename = fold_folder + metadata_file.split(os.sep)[-1].replace('.csv', '_stratified_folds.csv')
     if not os.path.isfile(fold_splitted_metadata_filename):
         metadata = Preprocessor_Metadata.prepare_metadata(metadata_file, anford_nr_file, mapping_file, nan_thresh)
-        metadata = create_splits(metadata,
+        metadata = Preprocessor_Metadata.create_splits(metadata,
                                  5,
                                  fold_folder,
                                  fold_splitted_metadata_filename)
@@ -207,7 +233,7 @@ if __name__ == '__main__':
     column_groups = Preprocessor_Metadata.get_column_name_groups(metadata)  # group columns into logical
 
     for criterion_label in column_groups[column_group]:
-        criterion_label = "diffuse_pleural_thickening_extent_right"  #  diffuse_pleural_thickening_nad
+        #criterion_label = "diffuse_pleural_thickening_extent_right"  #  diffuse_pleural_thickening_nad
         if criterion_label in metadata.keys() and criterion_label not in column_groups["general"]:
             metadata = prepared_metadata[prepared_metadata[criterion_label] != -1]
             test_metadata = metadata[metadata[f'Fold{fold}'] == 'test']
@@ -217,11 +243,13 @@ if __name__ == '__main__':
 
             current_train_metadata = train_metadata[[col for col in column_groups[column_group] if col in metadata.columns]]
             current_test_metadata = test_metadata[[col for col in column_groups[column_group] if col in metadata.columns]]
-            is_binary_classification = len(prepared_metadata[criterion_label].unique()) == 2
-            model = resnet50(weights=ResNet50_Weights)
+            num_classes = len(prepared_metadata[criterion_label].unique())
+            is_binary_classification = num_classes == 2
+            model = resnet50() #weights=ResNet50_Weights)
+
             model.conv1 = torch.nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
 
-            num_classes = len(current_train_metadata.columns) - len(column_groups["general"])
+            #num_classes = len(current_train_metadata.columns) - len(column_groups["general"])
             model.fc = torch.nn.Linear(model.fc.in_features, num_classes)
 
             # dataloader
@@ -240,7 +268,7 @@ if __name__ == '__main__':
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
             optimizer = optim.AdamW(model.parameters(), lr=learning_rate)
 
-            wandb.init(project="Asbest", config={
+            wandb.init(project="Asbestosis_test", config={
                 "learning-rate": learning_rate,
                 "dataset:": root_folder,
                 "split folder": fold_folder,
@@ -251,7 +279,7 @@ if __name__ == '__main__':
                 "optimizer": str(optimizer),
                 "Augmentation": str(preprocess),
                 "Machine": "HPC",
-                "Pretrained": str(ResNet50_Weights),
+                "Pretrained": "No", # str(ResNet50_Weights),
                 "train criteria": criterion_label,
                 "Fold": fold
             }, name="b={}_l={}_n={}_fold={}_{}_prepMeta".format(batch_size, learning_rate, number_of_epochs, fold, criterion_label))
