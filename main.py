@@ -58,7 +58,7 @@ class X_rayImageDataset(Dataset):
         img_path = self.img_dir + str(int(self.img_labels.iloc[idx]['fileID'])) + '-IM_0001.png'
         image = PIL.Image.open(img_path)
         label = int(self.img_labels.iloc[idx][self.label_column])
-        label = self.hot_encodings[label].tolist() # one hot encoding for label
+        label = self.hot_encodings[label] # one hot encoding for label
         if self.transform:
             image = self.transform(image)
         return image, label, img_path
@@ -95,7 +95,7 @@ def run_epoch(model, optimizer, criterion, scaler, data_loader, train=True, show
 
         with torch.autocast(device_type=device, dtype=torch.float16):
             pred_probs = model(data)
-            loss = criterion(pred_probs, ground_truth)  #[:, 0]
+            loss = criterion(pred_probs[:, 0], ground_truth)  #TODO
         if train:
             scaler.scale(loss).backward()
             scaler.step(optimizer)
@@ -205,7 +205,7 @@ if __name__ == '__main__':
     ])
 
     # Datenvorverarbeitung: fehlende Werte handeln; einlesen
-    base_folder = "D:\\Projects\\Thorax\\DeboraThorax\\" # "/hpcwork/it336446/Data/DeboraThorax/"  #
+    base_folder = "/hpcwork/it336446/Data/DeboraThorax/"  # "D:\\Projects\\Thorax\\DeboraThorax\\" # 
     root_folder = base_folder + "png/" 
     mapping_file = base_folder + "mapping.csv"
     fold_folder = base_folder + "split_folds/"
@@ -270,7 +270,7 @@ if __name__ == '__main__':
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
             optimizer = optim.AdamW(model.parameters(), lr=learning_rate)
 
-            wandb.init(project="Asbestosis_test", config={
+            wandb.init(project="Asbestosis", config={
                 "learning-rate": learning_rate,
                 "dataset:": root_folder,
                 "split folder": fold_folder,
@@ -297,6 +297,8 @@ if __name__ == '__main__':
             y_true_eval, y_probs_eval = run_epoch(model, optimizer, criterion, scaler, test_loader, train=False)
             if is_binary_classification:
                 compute_roc_curve(y_true_eval, y_probs_eval, plot=True, title_suffix="test")
+            else:
+                compute_roc_one_vs_rest(y_true_eval, y_probs_eval, prepared_metadata[criterion_label].unique(), criterion_label)
 
             torch.save(model.state_dict(), os.path.join(base_folder, f'asbestosis_n{number_of_epochs}_b{batch_size}_label={criterion_label}.pth'))
             wandb.finish()
