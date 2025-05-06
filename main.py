@@ -8,7 +8,7 @@ import torch
 from torch import nn, optim, GradScaler
 from torch.utils.data import Dataset, RandomSampler, DataLoader
 from torchvision.models import resnet50, ResNet50_Weights
-from torchvision.transforms import transforms
+from torchvision.transforms.v2 import ColorJitter, RandomResizedCrop, RandomRotation, ToTensor, Compose
 import torch.multiprocessing as mp
 from sklearn.metrics import RocCurveDisplay, roc_curve, auc
 from sklearn.preprocessing import LabelBinarizer
@@ -42,7 +42,8 @@ class X_rayImageDataset(Dataset):
         self.img_labels = self.get_available_data(annotations)
         self.transform = transform
         self.label_column = label_column
-        self.hot_encodings = np.eye(len(self.img_labels[self.label_column].unique()))
+        self.label_index_mapping = {label: idx for idx, label in enumerate(sorted(self.img_labels[self.label_column].unique()))}
+        self.hot_encodings = np.eye(len(self.label_index_mapping))
 
     def get_available_data(self, annotations):
         available_annotations = []
@@ -57,8 +58,8 @@ class X_rayImageDataset(Dataset):
     def __getitem__(self, idx):
         img_path = self.img_dir + str(int(self.img_labels.iloc[idx]['fileID'])) + '.zip'
         image = PIL.Image.open(img_path)
-        label = int(self.img_labels.iloc[idx][self.label_column])
-        label = self.hot_encodings[label] # one hot encoding for label
+        label = self.img_labels.iloc[idx][self.label_column]
+        label = self.hot_encodings[self.label_index_mapping[label]] # one hot encoding for label
         if self.transform:
             image = self.transform(image)
         return image, label, img_path
@@ -100,6 +101,7 @@ def run_epoch(model, optimizer, criterion, scaler, data_loader, train=True, show
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
+            lr_scheduler.step()
 
         y_true[batch_id] = ground_truth
         y_probs[batch_id] = pred_probs
@@ -108,6 +110,7 @@ def run_epoch(model, optimizer, criterion, scaler, data_loader, train=True, show
         epoch_loss += loss.item()
         print('{} step loss: {}'.format(suffix, loss.item()))
     avg_epoch_loss = epoch_loss / len(data_loader)
+    wandb.log({f"average_loss/{suffix}": avg_epoch_loss})
     print('{} {}: \tAverage Loss: {:.6f}'.format(
         suffix,
         "Epoch " + str(epoch),
@@ -197,25 +200,26 @@ def compute_roc_curve(y_true, y_scores, plot=False, title_suffix=''):
 
 
 if __name__ == '__main__':
-    preprocess = transforms.Compose([
-        transforms.Resize(256),
-        transforms.CenterCrop(224),
-        transforms.ToTensor(),
+    preprocess = Compose([
+        RandomResizedCrop(224),
+        RandomRotation(5),
+        ColorJitter(0.3),
+        ToTensor(),
         #transforms.Normalize(0.5, 0.5),
     ])
 
     # Datenvorverarbeitung: fehlende Werte handeln; einlesen
-    base_folder = "D:\\Projects\\Thorax\\DeboraThorax\\"  #  "/hpcwork/it336446/Data/DeboraThorax/"  #
-    root_folder = base_folder + "anon/"
+    base_folder = "/hpcwork/it336446/Data/DeboraThorax/"  #  "D:\\Projects\\Thorax\\DeboraThorax\\"  #
+    root_folder = base_folder + "png/" 
     mapping_file = base_folder + "mapping.csv"
     fold_folder = base_folder + "strat_dichotom_splits\\"
 
     metadata_file = base_folder + "dichotome_data.csv"
     anford_nr_file = base_folder + "table.csv"
     nan_thresh = 999
-    batch_size = 16
-    learning_rate = 0.0001
-    number_of_epochs = 1 # 40
+    batch_size = 24
+    learning_rate = 0.01
+    number_of_epochs = 40
     fold = 0
     # column_groups keys are general, symbol, rounded, irregular, mixed, large, pleural, occupational
     column_group = "mixed"
@@ -248,29 +252,28 @@ if __name__ == '__main__':
         current_test_metadata = test_metadata[[col for col in column_groups[column_group] if col in metadata.columns]]
         num_classes = len(metadata[criterion_label].unique())
         is_binary_classification = num_classes == 2
-        model = resnet50() #weights=ResNet50_Weights)
+
+        model = resnet50(weights=ResNet50_Weights)
 
         model.conv1 = torch.nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
-
-        #num_classes = len(current_train_metadata.columns) - len(column_groups["general"])
         model.fc = torch.nn.Linear(model.fc.in_features, num_classes)
 
         # dataloader
         n_workers = mp.cpu_count() if mp.cpu_count() < 25 else 24
         gen = torch.Generator()
-
         train_dataset = X_rayImageDataset(current_train_metadata, root_folder, label_column=criterion_label, transform=preprocess)
         train_sampler = RandomSampler(train_dataset, replacement=False, generator=gen)
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False, num_workers=n_workers, sampler=train_sampler,
-                           generator=gen, drop_last=True, pin_memory=False)
+                            generator=gen, drop_last=True, pin_memory=False)
 
         test_dataset = X_rayImageDataset(current_test_metadata, root_folder, label_column=column_groups[column_group][0], transform=preprocess)
         test_sampler = RandomSampler(test_dataset, replacement=False, generator=gen)
         test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=n_workers, sampler=test_sampler,
-                           generator=gen, drop_last=True, pin_memory=False)
+                            generator=gen, drop_last=True, pin_memory=False)
 
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
         optimizer = optim.AdamW(model.parameters(), lr=learning_rate)
+        lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, learning_rate, number_of_epochs * len(train_loader))
 
         wandb.init(project="Asbestosis", config={
             "learning-rate": learning_rate,
@@ -283,16 +286,17 @@ if __name__ == '__main__':
             "optimizer": str(optimizer),
             "Augmentation": str(preprocess),
             "Machine": "HPC",
-            "Pretrained": "No", # str(ResNet50_Weights),
+            "Pretrained": str(ResNet50_Weights),
             "train criteria": criterion_label,
-            "Fold": fold
-        }, name="b={}_l={}_n={}_fold={}_{}_prepMeta".format(batch_size, learning_rate, number_of_epochs, fold, criterion_label))
+            "Fold": fold,
+            "metadata": metadata_file
+        }, name="b={}_l={}_n={}_fold={}_{}".format(batch_size, learning_rate, number_of_epochs, fold, criterion_label))
 
         criterion = nn.BCEWithLogitsLoss() if is_binary_classification else nn.CrossEntropyLoss()
         scaler = GradScaler()
         model = model.to(device)
         for epoch in range(number_of_epochs):
-            y_true, y_probs = run_epoch(model, optimizer, criterion, scaler, train_loader, train=True)
+            y_true, y_probs = run_epoch(model, optimizer, criterion, scaler, train_loader, train=True, show_figs=False)
             if epoch % 10 == 0 and is_binary_classification:
                 compute_roc_curve(y_true, y_probs, plot=False, title_suffix="train")
 
