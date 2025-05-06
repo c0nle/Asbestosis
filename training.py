@@ -188,7 +188,7 @@ def get_dataloader(training_feature, lung_train, pleura_train, symbol_train, lun
 
 if __name__ == "__main__":
     path_root = "/hpcwork/p0020933/workspace_debora/Data/Thorax_data/"
-    feature_file_path = "/hpcwork/p0020933/workspace_debora/Data/found_merged_data.xlsx"  # "/hpcwork/it336446/Data/found_merged_data.xlsx"
+    feature_file_path = "/hpcwork/p0020933/workspace_debora/Data/dichotome_data.csv"  # "/hpcwork/it336446/Data/found_merged_data.xlsx"
     training_feature = "lung"
     batch_size = 4
     number_of_epochs = 80

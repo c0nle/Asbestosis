@@ -1,3 +1,4 @@
+import math
 import os
 
 import utils
@@ -5,12 +6,21 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-main_path = "/home/debora/Documents/Projects/Thorax/"  # "D:\\Projects\\Thorax\\"
-data = pd.read_excel(main_path + "found_merged_data.xlsx")
+main_path = "D:\\Projects\\Thorax\\DeboraThorax\\" #  "/home/debora/Documents/Projects/Thorax/"  #
+data = pd.read_excel(main_path + "found_merged_data.xlsx")  # merged_data_prepared.csv")
+print(data["Geburtsdatum"].describe())
+birth_col = pd.to_datetime(data["Geburtsdatum"], format="%d.%m.%Y")
+exam_col = pd.to_datetime(data["Untersuchungsdatum"], format="%d.%m.%Y")
+age = ((exam_col - birth_col) / pd.Timedelta(days=365.25)).astype(int)
+print(age.min())
+print(age.max())
+print(age.mean())
+
 
 symbol_columns = [col for col in data.columns if col.startswith('symbol')]
+current_symbol_cols = [col for col in symbol_columns if col in data.columns]
 symbols_df = data[symbol_columns]
-print(symbols_df.describe())
+#print(symbols_df.describe())
 
 lung_columns = [
     "small_rounded_opacities_size_p",
@@ -54,8 +64,9 @@ lung_columns = [
     "costophrenic_angle_obliteration_right",
     "costophrenic_angle_obliteration_left"
 ]
-lung_df = data[lung_columns]
-print(lung_df.describe())
+current_lung_cols = [col for col in lung_columns if col in data.columns]
+lung_df = data[current_lung_cols]
+#print(lung_df.describe())
 
 
 pleura_columns = [
@@ -105,20 +116,35 @@ pleura_columns = [
     "occupational_disease_asbestos_mesothelioma",
     "occupational_disease_ionized_radiation"
 ]
-pleura_df = data[pleura_columns]
-print(pleura_df.describe())
+current_pleura_cols = [col for col in pleura_columns if col in data.columns]
+pleura_df = data[current_pleura_cols]
+#print(pleura_df.describe())
 
 
-def plot_distribution(df):
+def plot_distribution(df, title_value):
     numeric_cols = df.select_dtypes(include=['number']).columns
+    color_map = {'0.0': 'b', '1.0': 'm', '2.0': 'y', 'NaN': 'g'}
+    all_possible_values = ['0.0', '1.0', '2.0', 'NaN']
 
-    for col in numeric_cols:
-        plt.figure(figsize=(8, 4))
-        sns.histplot(df[col], kde=True)
-        plt.title(f'Distribution von {col}')
-        plt.xlabel(col)
-        plt.ylabel('Häufigkeit')
-        plt.savefig(f'{main_path}data_analysis{os.sep}{col}.png')
+    fig, ax = plt.subplots(nrows=4, ncols=5, figsize=(20, 20), sharey=True)
+    fig.suptitle("Distribution of " + title_value + " values", fontsize=40)
+    i = 0
+    for row in ax:
+        for col in row:
+            if i >= len(numeric_cols):
+                col.axis('off')
+                continue
+            col_name = numeric_cols[i]
+            while col_name not in df.columns:
+                i = i+1
+                col_name = numeric_cols[i]
+            column_values = df[col_name].fillna('NaN').astype(str).value_counts()
+            counts = [column_values.get(v, 0) for v in all_possible_values]
+            colors = [color_map[v] for v in all_possible_values]
+            col.bar(all_possible_values, counts, color=colors)
+            col.set_title(col_name.replace('_pleural', '').title())
+            i = i+1
+    plt.savefig(f'{main_path}data_analysis{os.sep}{title_value}.png')
 
 
 # Funktion zur Analyse der Korrelation zwischen zwei Spalten
@@ -143,30 +169,30 @@ def plot_correlation(df, title):
 
 # Verteilung darstellen
 distributions = pd.DataFrame({
-    'Column': [col for col in lung_columns],
-    'Entries': [data[col].unique() for col in lung_columns]
+    'Column': [col for col in current_lung_cols],
+    'Entries': [data[col].unique() for col in current_lung_cols]
 })
 distributions.to_excel(f'{main_path}data_analysis{os.sep}Distributions_Lunge.xlsx', index=False)
 
 distributions = pd.DataFrame({
-    'Column': [col for col in pleura_columns],
-    'Entries': [data[col].unique() for col in pleura_columns]
+    'Column': [col for col in current_pleura_cols],
+    'Entries': [data[col].unique() for col in current_pleura_cols]
 })
 distributions.to_excel(f'{main_path}data_analysis{os.sep}Distributions_Pleura.xlsx', index=False)
 
 distributions = pd.DataFrame({
-    'Column': [col for col in symbol_columns],
-    'Entries': [data[col].unique() for col in symbol_columns]
+    'Column': [col for col in current_symbol_cols],
+    'Entries': [data[col].unique() for col in current_symbol_cols]
 })
 distributions.to_excel(f'{main_path}data_analysis{os.sep}Distributions_Symbols.xlsx', index=False)
 
-plot_correlation(pleura_df, "Pleura")
-plot_correlation(lung_df, "Lung")
-plot_correlation(symbols_df, "Symbols")
+#plot_correlation(pleura_df, "Pleura")
+#plot_correlation(lung_df, "Lung")
+#plot_correlation(symbols_df, "Symbols")
 
 #plot_distribution(symbols_df)
-#plot_distribution(lung_df)
-#plot_distribution(pleura_df)
+plot_distribution(lung_df, "Lung")
+plot_distribution(pleura_df, "Pleura")
 
 # Korrelation zwischen zwei Spalten analysieren (z.B. Spalte1 und Spalte2)
 #analyze_correlation(df, 'Spalte1', 'Spalte2')

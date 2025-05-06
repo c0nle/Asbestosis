@@ -1,4 +1,10 @@
+import os
+import zipfile
+import cv2
+import numpy as np
+
 import pandas as pd
+import pydicom
 from sklearn.model_selection import train_test_split, StratifiedGroupKFold
 
 
@@ -60,3 +66,33 @@ pd.DataFrame):
             pleura_eval, pleura_test = train_test_split(pleura_test, test_size=1 - evaluation_fraction)
 
     return lung_train, pleura_train, symbol_train, lung_eval, pleura_eval, symbol_eval, lung_test, pleura_test, symbol_test
+
+
+def zip_to_img(root_folder_zip, root_folder_png):
+    for zip_folder in os.listdir(root_folder_zip):
+        zip_path = os.path.join(root_folder_zip, zip_folder)
+        if not zip_folder.endswith(".zip"):
+            continue
+
+        with zipfile.ZipFile(zip_path, 'r') as zip_dir:
+            dicom = [f for f in zip_dir.namelist() if f.endswith("IM_0001")]
+
+            if not dicom:
+                print(f"No dicom image found in {zip_folder}")
+                continue
+
+            with zip_dir.open(dicom[0]) as dicom_file:
+                dicom_ds = pydicom.dcmread(dicom_file, force=True)
+                new_path = os.path.join(root_folder_png, zip_folder.replace(".zip", ".jpg"))
+
+                # normalize to [0, 255]
+                pixel_array = dicom_ds.pixel_array
+                min_val = np.percentile(pixel_array, 0.5)
+                max_val = np.percentile(pixel_array, 99.5)
+                normalized_pixel_array = np.clip((pixel_array - min_val) / (max_val - min_val), 0, 1)
+                normalized_pixel_array = (normalized_pixel_array * 255).astype(np.uint8)
+
+                cv2.imwrite(new_path, normalized_pixel_array)
+
+
+zip_to_img("D:\\Projects\\Thorax\\DeboraThorax\\anon\\", "D:\\Projects\\Thorax\\DeboraThorax\\jpg\\")

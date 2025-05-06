@@ -1,6 +1,6 @@
 import pandas as pd
 
-feature_path = "D:\\Projects\\Thorax\\ArbeitsRadio\\ArbeitsRadio\\merged_data.csv" # "/home/debora/Documents/Projects/Thorax/merged_data.csv"
+feature_path = "D:\\Projects\\Thorax\\dichotome_data.csv" # "/home/debora/Documents/Projects/Thorax/merged_data.csv"
 id_path = "D:\\Projects\\Thorax\\st_Befundtext_RO_Thorax_AR.xlsx"  # "/home/debora/Documents/Projects/Thorax/st_Befundtext_RO_Thorax_AR.xlsx"
 
 feature_data = pd.read_csv(feature_path)
@@ -14,4 +14,4 @@ id_data.rename(columns={"Name": "Nachname"}, inplace=True)
 
 found_data = pd.merge(feature_data, id_data, how='inner', on=['Nachname', 'Vorname', 'Geburtsdatum', 'Untersuchungsdatum'])
 
-found_data.to_excel("D:\\Projects\\Thorax\\found_merged_data.xlsx", index=False)
+found_data.to_excel("D:\\Projects\\Thorax\\found_merged_dichotome_data.xlsx", index=False)

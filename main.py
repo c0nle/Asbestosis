@@ -47,7 +47,7 @@ class X_rayImageDataset(Dataset):
     def get_available_data(self, annotations):
         available_annotations = []
         for filename in annotations["fileID"]:
-            if os.path.exists(self.img_dir + str(int(filename)) + '-IM_0001.png'):
+            if os.path.exists(self.img_dir + str(int(filename)) + '.zip'):
                 available_annotations.append(int(filename))
         return annotations[annotations['fileID'].isin(available_annotations)]
 
@@ -55,7 +55,7 @@ class X_rayImageDataset(Dataset):
         return len(self.img_labels)
 
     def __getitem__(self, idx):
-        img_path = self.img_dir + str(int(self.img_labels.iloc[idx]['fileID'])) + '-IM_0001.png'
+        img_path = self.img_dir + str(int(self.img_labels.iloc[idx]['fileID'])) + '.zip'
         image = PIL.Image.open(img_path)
         label = int(self.img_labels.iloc[idx][self.label_column])
         label = self.hot_encodings[label] # one hot encoding for label
@@ -206,11 +206,11 @@ if __name__ == '__main__':
 
     # Datenvorverarbeitung: fehlende Werte handeln; einlesen
     base_folder = "D:\\Projects\\Thorax\\DeboraThorax\\"  #  "/hpcwork/it336446/Data/DeboraThorax/"  #
-    root_folder = base_folder + "png/" 
+    root_folder = base_folder + "anon/"
     mapping_file = base_folder + "mapping.csv"
-    fold_folder = base_folder + "split_folds/"
+    fold_folder = base_folder + "strat_dichotom_splits\\"
 
-    metadata_file = base_folder + "merged_data.csv"
+    metadata_file = base_folder + "dichotome_data.csv"
     anford_nr_file = base_folder + "table.csv"
     nan_thresh = 999
     batch_size = 16
@@ -218,87 +218,89 @@ if __name__ == '__main__':
     number_of_epochs = 1 # 40
     fold = 0
     # column_groups keys are general, symbol, rounded, irregular, mixed, large, pleural, occupational
-    column_group = "pleural"
+    column_group = "mixed"
+    criterion_label = "mixed_shapes"  #  diffuse_pleural_thickening_nad
 
     # Split Train-Test:
     fold_splitted_metadata_filename = fold_folder + metadata_file.split(os.sep)[-1].replace('.csv', '_stratified_folds.csv')
     if not os.path.isfile(fold_splitted_metadata_filename):
-        metadata = Preprocessor_Metadata.prepare_metadata(metadata_file, anford_nr_file, mapping_file, nan_thresh)
+        metadata = Preprocessor_Metadata.prepare_metadata(metadata_file, anford_nr_file, mapping_file, nan_thresh, True)
         metadata = Preprocessor_Metadata.create_splits(metadata,
-                                 5,
-                                 fold_folder,
-                                 fold_splitted_metadata_filename)
+                                                       5,
+                                                       fold_folder,
+                                                       fold_splitted_metadata_filename,
+                                                       criterion_label)
     else:
         metadata = pd.read_csv(fold_splitted_metadata_filename)
 
     prepared_metadata = metadata
-    column_groups = Preprocessor_Metadata.get_column_name_groups(metadata)  # group columns into logical
+    column_groups = Preprocessor_Metadata.get_column_name_groups(metadata, True)  # group columns into logical
 
-    for criterion_label in column_groups[column_group]:
-        #criterion_label = "diffuse_pleural_thickening_extent_right"  #  diffuse_pleural_thickening_nad
-        if criterion_label in metadata.keys() and criterion_label not in column_groups["general"]:
-            metadata = prepared_metadata[prepared_metadata[criterion_label] != -1]
-            test_metadata = metadata[metadata[f'Fold{fold}'] == 'test']
-            train_metadata = metadata[metadata[f'Fold{fold}'] == 'train']
-            #print(criterion_label + ":\n\ttrain --- pos: " + str(len(train_metadata[train_metadata[criterion_label] == 1])) + " neg: " + str(len(train_metadata[train_metadata[criterion_label] == 0])) +
-            #      "\n\ttest --- pos: " + str(len(test_metadata[test_metadata[criterion_label] == 1])) + " neg: " + str(len(test_metadata[test_metadata[criterion_label] == 0])))
+    #for criterion_label in column_groups[column_group]:
+    if criterion_label in metadata.keys() and criterion_label not in column_groups["general"]:
+        metadata = prepared_metadata[prepared_metadata[criterion_label] != -1]
+        test_metadata = metadata[metadata[f'Fold{fold}'] == 'test']
+        train_metadata = metadata[metadata[f'Fold{fold}'] == 'train']
+        #print(criterion_label + ":\n\ttrain --- pos: " + str(len(train_metadata[train_metadata[criterion_label] == 1])) + " neg: " + str(len(train_metadata[train_metadata[criterion_label] == 0])) +
+        #      "\n\ttest --- pos: " + str(len(test_metadata[test_metadata[criterion_label] == 1])) + " neg: " + str(len(test_metadata[test_metadata[criterion_label] == 0])))
 
-            current_train_metadata = train_metadata[[col for col in column_groups[column_group] if col in metadata.columns]]
-            current_test_metadata = test_metadata[[col for col in column_groups[column_group] if col in metadata.columns]]
-            num_classes = len(metadata[criterion_label].unique())
-            is_binary_classification = num_classes == 2
-            model = resnet50() #weights=ResNet50_Weights)
+        current_train_metadata = train_metadata[[col for col in column_groups[column_group] if col in metadata.columns]]
+        current_test_metadata = test_metadata[[col for col in column_groups[column_group] if col in metadata.columns]]
+        num_classes = len(metadata[criterion_label].unique())
+        is_binary_classification = num_classes == 2
+        model = resnet50() #weights=ResNet50_Weights)
 
-            model.conv1 = torch.nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+        model.conv1 = torch.nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
 
-            #num_classes = len(current_train_metadata.columns) - len(column_groups["general"])
-            model.fc = torch.nn.Linear(model.fc.in_features, num_classes)
+        #num_classes = len(current_train_metadata.columns) - len(column_groups["general"])
+        model.fc = torch.nn.Linear(model.fc.in_features, num_classes)
 
-            # dataloader
-            n_workers = mp.cpu_count() if mp.cpu_count() < 25 else 24
-            gen = torch.Generator()
-            train_dataset = X_rayImageDataset(current_train_metadata, root_folder, label_column=criterion_label, transform=preprocess)
-            train_sampler = RandomSampler(train_dataset, replacement=False, generator=gen)
-            train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False, num_workers=n_workers, sampler=train_sampler,
-                               generator=gen, drop_last=True, pin_memory=False)
+        # dataloader
+        n_workers = mp.cpu_count() if mp.cpu_count() < 25 else 24
+        gen = torch.Generator()
 
-            test_dataset = X_rayImageDataset(current_test_metadata, root_folder, label_column=column_groups[column_group][0], transform=preprocess)
-            test_sampler = RandomSampler(test_dataset, replacement=False, generator=gen)
-            test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=n_workers, sampler=test_sampler,
-                               generator=gen, drop_last=True, pin_memory=False)
+        train_dataset = X_rayImageDataset(current_train_metadata, root_folder, label_column=criterion_label, transform=preprocess)
+        train_sampler = RandomSampler(train_dataset, replacement=False, generator=gen)
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False, num_workers=n_workers, sampler=train_sampler,
+                           generator=gen, drop_last=True, pin_memory=False)
 
-            device = 'cuda' if torch.cuda.is_available() else 'cpu'
-            optimizer = optim.AdamW(model.parameters(), lr=learning_rate)
+        test_dataset = X_rayImageDataset(current_test_metadata, root_folder, label_column=column_groups[column_group][0], transform=preprocess)
+        test_sampler = RandomSampler(test_dataset, replacement=False, generator=gen)
+        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=n_workers, sampler=test_sampler,
+                           generator=gen, drop_last=True, pin_memory=False)
 
-            wandb.init(project="Asbestosis", config={
-                "learning-rate": learning_rate,
-                "dataset:": root_folder,
-                "split folder": fold_folder,
-                "number of training samples": len(train_loader.dataset),
-                "number of test samples": len(test_loader.dataset),
-                "epochs": number_of_epochs,
-                "batch size": batch_size,
-                "optimizer": str(optimizer),
-                "Augmentation": str(preprocess),
-                "Machine": "HPC",
-                "Pretrained": "No", # str(ResNet50_Weights),
-                "train criteria": criterion_label,
-                "Fold": fold
-            }, name="b={}_l={}_n={}_fold={}_{}_prepMeta".format(batch_size, learning_rate, number_of_epochs, fold, criterion_label))
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        optimizer = optim.AdamW(model.parameters(), lr=learning_rate)
 
-            criterion = nn.BCEWithLogitsLoss() if is_binary_classification else nn.CrossEntropyLoss()
-            scaler = GradScaler()
-            model = model.to(device)
-            for epoch in range(number_of_epochs):
-                y_true, y_probs = run_epoch(model, optimizer, criterion, scaler, train_loader, train=True)
-                if epoch % 10 == 0 and is_binary_classification:
-                    compute_roc_curve(y_true, y_probs, plot=False, title_suffix="train")
+        wandb.init(project="Asbestosis", config={
+            "learning-rate": learning_rate,
+            "dataset:": root_folder,
+            "split folder": fold_folder,
+            "number of training samples": len(train_loader.dataset),
+            "number of test samples": len(test_loader.dataset),
+            "epochs": number_of_epochs,
+            "batch size": batch_size,
+            "optimizer": str(optimizer),
+            "Augmentation": str(preprocess),
+            "Machine": "HPC",
+            "Pretrained": "No", # str(ResNet50_Weights),
+            "train criteria": criterion_label,
+            "Fold": fold
+        }, name="b={}_l={}_n={}_fold={}_{}_prepMeta".format(batch_size, learning_rate, number_of_epochs, fold, criterion_label))
 
-            y_true_eval, y_probs_eval = run_epoch(model, optimizer, criterion, scaler, test_loader, train=False)
-            if is_binary_classification:
-                compute_roc_curve(y_true_eval, y_probs_eval, plot=True, title_suffix="test")
-            else:
-                compute_roc_one_vs_rest(y_true_eval, y_probs_eval, prepared_metadata[criterion_label].unique(), criterion_label)
+        criterion = nn.BCEWithLogitsLoss() if is_binary_classification else nn.CrossEntropyLoss()
+        scaler = GradScaler()
+        model = model.to(device)
+        for epoch in range(number_of_epochs):
+            y_true, y_probs = run_epoch(model, optimizer, criterion, scaler, train_loader, train=True)
+            if epoch % 10 == 0 and is_binary_classification:
+                compute_roc_curve(y_true, y_probs, plot=False, title_suffix="train")
 
-            torch.save(model.state_dict(), os.path.join(base_folder, f'asbestosis_n{number_of_epochs}_b{batch_size}_label={criterion_label}.pth'))
-            wandb.finish()
+        y_true_eval, y_probs_eval = run_epoch(model, optimizer, criterion, scaler, test_loader, train=False)
+        if is_binary_classification:
+            compute_roc_curve(y_true_eval, y_probs_eval, plot=True, title_suffix="test")
+        else:
+            compute_roc_one_vs_rest(y_true_eval, y_probs_eval, prepared_metadata[criterion_label].unique(), criterion_label)
+
+        torch.save(model.state_dict(), os.path.join(base_folder, f'asbestosis_n{number_of_epochs}_b{batch_size}_label={criterion_label}.pth'))
+        wandb.finish()

@@ -48,7 +48,7 @@ def get_label_encoding(label_df):
                                label_df["small_rounded_opacities_size_r"])
         ]
         label_encoding['small_rounded_profusion'] = label_df.apply(encode_profusions, axis=1, args=(
-        "small_rounded_opacities_profusion_first", "small_rounded_opacities_profusion_second"))
+            "small_rounded_opacities_profusion_first", "small_rounded_opacities_profusion_second"))
         label_encoding['small_rounded_location'] = [
             # use bit represenation to encode all different options
             (int(ur) << 5) | (int(mr) << 4) | (int(lr) << 3) | (int(ul) << 2) | (int(ml) << 1) | int(ll)
@@ -199,7 +199,7 @@ def get_Subjects(path_root, feature_tensor):
                                     -1] + ".png"
                                 dicom_image.save(out_file_path)
 
-                                label = feature_tensor.loc[file_index]
+                                label = feature_tensor[feature_tensor["fileID" == file_index]]
                                 subject = tio.Subject(
                                     image=tio.ScalarImage(out_file_path),
                                     label=label.iloc[6:].to_dict()
@@ -245,7 +245,8 @@ def split_at_dash(value):
         return np.nan, np.nan
 
 
-def create_splits(metadata: pd.DataFrame, n_testfolds: int, output_folder: str, output_filename: str):
+def create_splits(metadata: pd.DataFrame, n_testfolds: int, output_folder: str, output_filename: str,  training_label="mixed_shapes"):
+    metadata = metadata[metadata[training_label] != -1]
     if not os.path.exists(output_folder):
         os.mkdir(output_folder)
 
@@ -253,7 +254,7 @@ def create_splits(metadata: pd.DataFrame, n_testfolds: int, output_folder: str, 
         metadata[f'Fold{fold}'] = ''
     strat = StratifiedGroupKFold(n_splits=n_testfolds, shuffle=True, random_state=0)
     for n_fold, test_fold in enumerate(
-            strat.split(metadata, y=metadata['technical_quality'], groups=metadata['medicoID'])):
+            strat.split(metadata, y=metadata[training_label], groups=metadata['medicoID'])):
         train_split = metadata.loc[test_fold[0]]
         test_split = metadata.loc[test_fold[1]]
 
@@ -266,10 +267,15 @@ def create_splits(metadata: pd.DataFrame, n_testfolds: int, output_folder: str, 
     return metadata
 
 
-def get_column_name_groups(metadata: pd.DataFrame):
+def get_column_name_groups(metadata: pd.DataFrame, dichotome=True):
     general_columns = ['Nachname', 'Vorname', 'Geburtsdatum', 'medicoID', 'Untersuchungsdatum',
                        'Untersuchung_Ort', 'Untersuchung_Art', 'id', 'Untersuchung_id',
-                       'technical_quality', "medicoID_y", "fileID"]
+                       'technical_quality', 'Aufnahmenummer', 'Anforderungsnummer', 'Untersuchungsnummer',
+                       'Station Anfordernd', 'Fachrichtung Anfordernd', 'Fachrichtung Anfordernd',
+                       'Untersuchung Dokumentiert',]
+    if not dichotome:
+        general_columns.append("medicoID_y")
+    general_columns.append("fileID")
     symbol_columns = [col for col in metadata.columns if col.startswith('symbol_')]
     symbol_columns.extend(general_columns)
 
@@ -304,7 +310,15 @@ def get_column_name_groups(metadata: pd.DataFrame):
 
 
 def prepare_metadata(metadata_file: str, anforderungsnr_file: str, mapping_file: str,
-                     maximum_occurance_of_nans_per_col: int):
+                     maximum_occurance_of_nans_per_col: int, dichotome_metadata=False):
+    '''
+    Removes entries with too much nan entries and merges metadata file with filename and examination number
+    :param metadata_file:
+    :param anforderungsnr_file:
+    :param mapping_file:
+    :param maximum_occurance_of_nans_per_col:
+    :return:
+    '''
     # Step1: Read files and merge to get correct AnforderungsNummern
     metadata = pd.read_csv(metadata_file)
     metadata['Geburtsdatum'] = pd.to_datetime(metadata['Geburtsdatum'], format='%d.%m.%Y')
@@ -326,22 +340,26 @@ def prepare_metadata(metadata_file: str, anforderungsnr_file: str, mapping_file:
     # Step2: replace nan entries with -1
     metadata.fillna(-1, inplace=True)
 
-    # Step3: map values for columns containing values like 0/0
-    slash_value_mapping = {"0/-": -0.25, "1/-": 0.25, "2/-": 1.25, "3/-": 2.25,
-                           "0/0": 0, "0/1": 0.5,
-                           "1/0": 0.75, "1/1": 1, "1/2": 1.5,
-                           "2/1": 1.75, "2/2": 2, "2/3": 2.5,
-                           "3/2": 2.75, "3/3": 3, "3/4": 3.5,
-                           "4/3": 3.75, "4/4": 4}
-    metadata['small_rounded_opacities_profusion_map'] = metadata[
-        'small_rounded_opacities_profusion'].map(slash_value_mapping)
-    metadata['small_irregular_opacities_profusion_map'] = metadata[
-        'small_irregular_opacities_profusion'].map(slash_value_mapping)
-    metadata['mixed_shapes_profusion_map'] = metadata['mixed_shapes_profusion'].map(
-        slash_value_mapping)
+    col_to_drop = []
+    if not dichotome_metadata:
+        # Step3: map values for columns containing values like 0/0
+        slash_value_mapping = {"0/-": -0.25, "1/-": 0.25, "2/-": 1.25, "3/-": 2.25,
+                               "0/0": 0, "0/1": 0.5,
+                               "1/0": 0.75, "1/1": 1, "1/2": 1.5,
+                               "2/1": 1.75, "2/2": 2, "2/3": 2.5,
+                               "3/2": 2.75, "3/3": 3, "3/4": 3.5,
+                               "4/3": 3.75, "4/4": 4}
+        metadata['small_rounded_opacities_profusion_map'] = metadata[
+            'small_rounded_opacities_profusion'].map(slash_value_mapping)
+        metadata['small_irregular_opacities_profusion_map'] = metadata[
+            'small_irregular_opacities_profusion'].map(slash_value_mapping)
+        metadata['mixed_shapes_profusion_map'] = metadata['mixed_shapes_profusion'].map(
+            slash_value_mapping)
 
-    # Step4: drop all columns that are not needed for training
-    col_to_drop = ["medicoID_y", "mixed_shapes_profusion", "small_irregular_opacities_profusion", "small_rounded_opacities_profusion"]
+        # Step4: drop all columns that are not needed for training
+        col_to_drop = ["medicoID_y", "mixed_shapes_profusion", "small_irregular_opacities_profusion",
+                       "small_rounded_opacities_profusion"]
+
     # find other columns to drop: all that have more nan entries than nan_thresh
     nan_per_column_count = [(col_name, len(metadata[metadata[col_name] != metadata[col_name]])) for col_name in
                             metadata.columns]
@@ -351,7 +369,7 @@ def prepare_metadata(metadata_file: str, anforderungsnr_file: str, mapping_file:
     metadata.drop(columns=col_to_drop, inplace=True)
     print("Dropped following columns because they contained at least " + str(
         int(maximum_occurance_of_nans_per_col / len(metadata) * 100)) + " % nan-values.")
-    print(col_to_drop[1:])
+    print(col_to_drop)
     metadata.to_csv(metadata_file.replace('.csv', '_prepared.csv'), index=False)
     return metadata
 
@@ -419,7 +437,308 @@ def create_individual_metadata_files(overall_metadata_file: str):
             dataframe.to_excel(writer, sheet_name=sheet_name, index=False)
         pd.DataFrame(metadata_lengths).to_excel(writer, sheet_name="Number of entries per sheet", index=False)
 
-if __name__ == "__main__":
-    overall_filename = "D:\\Projects\\Thorax\\DeboraThorax\\split_folds\\merged_data_stratified_folds.csv"
-    create_individual_metadata_files(overall_filename)
 
+def create_dichotome_metadata(original_metadata: pd.DataFrame, output_path):
+    dichotome_metadata = original_metadata.copy()
+
+    # --- 1. Drop unused columns ---
+    unused_columns = ["technical_quality_t", "lateral_exposure"] + [
+        col for col in dichotome_metadata.columns if col.startswith("symbol_")
+    ]
+    dichotome_metadata.drop(columns=unused_columns, inplace=True)
+
+    # --- 2. Binary encoding ---
+    dichotome_metadata["technical_quality"] = dichotome_metadata["technical_quality"].isin([1, 2]).astype(int)
+
+    # --- 3. Helper masks ---
+    valid_rounded = dichotome_metadata["small_rounded_opacities_profusion"].notna() & ~dichotome_metadata[
+        "small_rounded_opacities_profusion"].isin(
+        ["0/-", "0/0", "0/1"])
+    valid_irregular = dichotome_metadata["small_irregular_opacities_profusion"].notna() & ~dichotome_metadata[
+        "small_irregular_opacities_profusion"].isin(["0/-", "0/0", "0/1"])
+
+    # ### LUNG COLUMNS
+    # --- 4. Small rounded opacities ---
+    # - Location    middle or upper field; lower field
+    # - Size        0 = size until 1.5mm;       1 = size 1.5 - 10 mm
+    right_cols = ["small_rounded_opacities_upper_right", "small_rounded_opacities_middle_right",
+                  "small_rounded_opacities_lower_right"]
+    left_cols = ["small_rounded_opacities_upper_left", "small_rounded_opacities_middle_left",
+                 "small_rounded_opacities_lower_left"]
+
+    any_right_present = dichotome_metadata[right_cols].eq(1).any(axis=1)
+    any_left_present = dichotome_metadata[left_cols].eq(1).any(axis=1)
+
+    dichotome_metadata.loc[any_right_present & valid_rounded, "small_rounded_right"] = np.where(
+        (dichotome_metadata.loc[any_right_present & valid_rounded, "small_rounded_opacities_lower_right"] == 1),
+        "lower", "middle_upper"
+    )
+
+    dichotome_metadata.loc[any_left_present & valid_rounded, "small_rounded_left"] = np.where(
+        dichotome_metadata.loc[any_left_present & valid_rounded, "small_rounded_opacities_lower_left"] == 1,
+        "lower", "middle_upper"
+    )
+
+    # p = 0 -> size until 1.5mm
+    # q|r = 1 -> size 1.5 - 10 mm
+    size_mask = dichotome_metadata["small_rounded_right"].notna() | dichotome_metadata["small_rounded_left"].notna()
+    dichotome_metadata.loc[size_mask, "small_rounded_size"] = np.where(
+        dichotome_metadata.loc[size_mask, "small_rounded_opacities_size_p"] == 1,
+        "<= 1.5mm", "1.5-10mm"
+    )
+
+    # --- 5. Small irregular opacities ---
+    # - Location    middle or upper field; lower field
+    # - Size        0 = size until 3mm;    1 = size 3 - 10 mm
+    right_cols = ["small_irregular_opacities_upper_right", "small_irregular_opacities_middle_right",
+                  "small_irregular_opacities_lower_right"]
+    left_cols = ["small_irregular_opacities_upper_left", "small_irregular_opacities_middle_left",
+                 "small_irregular_opacities_lower_left"]
+
+    any_right_present = dichotome_metadata[right_cols].eq(1).any(axis=1)
+    any_left_present = dichotome_metadata[left_cols].eq(1).any(axis=1)
+
+    dichotome_metadata.loc[any_right_present & valid_irregular, "small_irregular_right"] = np.where(
+        dichotome_metadata.loc[any_right_present & valid_irregular, "small_irregular_opacities_lower_right"] == 1,
+        "lower", "middle_upper"
+    )
+
+    dichotome_metadata.loc[any_left_present & valid_irregular, "small_irregular_left"] = np.where(
+        dichotome_metadata.loc[any_left_present & valid_irregular, "small_irregular_opacities_lower_left"] == 1,
+        "lower", "middle_upper"
+    )
+
+    # s|t = 0 -> size until 3 mm
+    # u = 1 -> size 3 - 10 mm
+    size_mask = dichotome_metadata["small_irregular_right"].notna() | dichotome_metadata["small_irregular_left"].notna()
+    dichotome_metadata.loc[size_mask, "small_irregular_size"] = np.where(
+        dichotome_metadata.loc[size_mask, "small_irregular_opacities_size_u"] == 1,
+        "3-10mm", "<= 3mm"
+    )
+
+    # --- 6. Mixed shapes (present if any notna) ---
+    dichotome_metadata["mixed_shapes"] = dichotome_metadata[["mixed_shapes_1", "mixed_shapes_2"]].notna().any(
+        axis=1).astype(int)
+
+    # --- 7. Large opacities location ---
+    loc_mask = dichotome_metadata["large_opacities"].notna()
+    dichotome_metadata.loc[loc_mask, "large_opacities"] = np.where(
+        (dichotome_metadata.loc[loc_mask, "large_opacities"] == "A") & dichotome_metadata.loc[
+            loc_mask, ["large_opacities_lower_right", "large_opacities_lower_left"]].eq(
+            1).any(axis=1),
+        "lower",
+        "middle_upper"
+    )
+
+    ### PLEURA COLUMNS
+    # --- 8. Diffuse pleural thickening ---
+    # a | b = 0 -> size until 10mm
+    # c = 1 -> size >10 mm
+    diff_mask = dichotome_metadata["diffuse_pleural_thickening_width_right"].notna() | dichotome_metadata[
+        "diffuse_pleural_thickening_width_left"].notna()
+    dichotome_metadata.loc[diff_mask, "diffuse_pleural_thickening_width"] = np.where(
+        (dichotome_metadata.loc[diff_mask, "diffuse_pleural_thickening_width_right"] == "c") | (
+                dichotome_metadata.loc[diff_mask, "diffuse_pleural_thickening_width_left"] == "c"),
+        "> 10mm",
+        "<= 10mm"
+    )
+
+    # 1 | 2 = 0 -> extend until 1/2
+    # 3 = 1 -> extend > 1/2
+    extend_mask = dichotome_metadata["diffuse_pleural_thickening_extent_right"].notna() | dichotome_metadata[
+        "diffuse_pleural_thickening_extent_left"].notna()
+    dichotome_metadata.loc[extend_mask, "diffuse_pleural_thickening_extend"] = np.where(
+        (dichotome_metadata.loc[extend_mask, "diffuse_pleural_thickening_width_right"] == 3) | (
+                    dichotome_metadata.loc[extend_mask, "diffuse_pleural_thickening_width_left"] == 3),
+        "> 1/2",
+        "<= 1/2"
+    )
+
+    dichotome_metadata.loc[diff_mask | extend_mask, "diffuse_pleural_location"] = np.where(
+        (dichotome_metadata.loc[diff_mask | extend_mask, "diffuse_pleural_thickening_lower_right"] == 1) | (
+                    dichotome_metadata.loc[diff_mask | extend_mask, "diffuse_pleural_thickening_lower_left"] == 1),
+        "lower",
+        "middle_upper"
+    )
+
+    # --- 9. Localized pleural thickening ---
+    # a | b = 0 -> size until 10mm
+    # c = 1 -> size >10 mm
+    local_mask = dichotome_metadata["localized_pleural_thickening_width_right"].notna() | dichotome_metadata[
+        "localized_pleural_thickening_width_left"].notna()
+    dichotome_metadata.loc[local_mask, "localized_pleural_thickening_width"] = np.where(
+        (dichotome_metadata.loc[local_mask, "localized_pleural_thickening_width_right"] == "c") | (
+                dichotome_metadata.loc[local_mask, "localized_pleural_thickening_width_left"] == "c"),
+        "> 10mm",
+        "<= 10mm"
+    )
+
+    # 1 | 2 = 0 -> extend until 1/2
+    # 3 = 1 -> extend > 1/2
+    local_extend_mask = dichotome_metadata["localized_pleural_thickening_extent_right"].notna() | dichotome_metadata[
+        "localized_pleural_thickening_width_left"].notna()
+    dichotome_metadata.loc[local_extend_mask, "localized_pleural_thickening_extend"] = np.where(
+        (dichotome_metadata.loc[local_extend_mask, "localized_pleural_thickening_width_right"] == 3) | (
+                dichotome_metadata.loc[local_extend_mask, "localized_pleural_thickening_width_left"] == 3),
+        "> 1/2",
+        "<= 1/2"
+    )
+
+    loc_mask = (
+            dichotome_metadata["localized_pleural_thickening_diaphragm_right"].notna() |
+            dichotome_metadata["localized_pleural_thickening_diaphragm_left"].notna() |
+            dichotome_metadata["localized_pleural_thickening_chest_wall_right"].notna() |
+            dichotome_metadata["localized_pleural_thickening_chest_wall_left"].notna()
+    )
+    dichotome_metadata.loc[loc_mask, "local_pleural_location"] = np.where(
+        (dichotome_metadata.loc[loc_mask, "localized_pleural_thickening_diaphragm_right"] == 1) | (
+                dichotome_metadata.loc[loc_mask, "localized_pleural_thickening_diaphragm_left"] == 1),
+        "diaphragm",
+        "chest_wall"
+    )
+
+    # --- 10. Pleural calcification ---
+    pleural_mask = (
+            dichotome_metadata["pleural_calcification_diaphragm_right"].notna() |
+            dichotome_metadata["pleural_calcification_diaphragm_left"].notna() |
+            dichotome_metadata["pleural_calcification_chest_wall_right"].notna() |
+            dichotome_metadata["pleural_calcification_chest_wall_left"].notna()
+    )
+
+    dichotome_metadata.loc[pleural_mask, "pleural_calcification_location"] = np.where(
+        (dichotome_metadata.loc[pleural_mask, "pleural_calcification_diaphragm_right"] == 1) | (
+                    dichotome_metadata.loc[pleural_mask, "pleural_calcification_diaphragm_left"] == 1),
+        "diaphragm",
+        "chest_wall"
+    )
+
+    dichotome_metadata.loc[pleural_mask, "pleural_calcification_side"] = np.select(
+        [
+            (dichotome_metadata.loc[pleural_mask, "pleural_calcification_diaphragm_right"] == 1) |
+            (dichotome_metadata.loc[pleural_mask, "pleural_calcification_chest_wall_right"] == 1),
+            (dichotome_metadata.loc[pleural_mask, "pleural_calcification_diaphragm_left"] == 1) |
+            (dichotome_metadata.loc[pleural_mask, "pleural_calcification_chest_wall_left"] == 1)
+        ],
+        ["right", "left"],
+        default=""
+    )
+
+    # --- 11. occupational disease ---
+    occupational_mask = (
+            dichotome_metadata["occupational_disease_silicosis"].notna() |
+            dichotome_metadata["occupational_disease_silicotuberculosis"].notna() |
+            dichotome_metadata["occupational_disease_quartz_dust_lung_cancer"].notna() |
+            dichotome_metadata["occupational_disease_asbestosis"].notna() |
+            dichotome_metadata["occupational_disease_asbestos_pleura"].notna() |
+            dichotome_metadata["occupational_disease_asbestos_lung_cancer"].notna() |
+            dichotome_metadata["occupational_disease_asbestos_larynx_cancer"].notna() |
+            dichotome_metadata["occupational_disease_asbestos_mesothelioma"].notna() |
+            dichotome_metadata["occupational_disease_ionized_radiation"].notna()
+    )
+    dichotome_metadata.loc[occupational_mask, "occupational_disease"] = np.where(
+        ((dichotome_metadata.loc[occupational_mask, "occupational_disease_silicosis"] == 1) |
+         (dichotome_metadata.loc[occupational_mask, "occupational_disease_silicotuberculosis"] == 1) |
+         (dichotome_metadata.loc[occupational_mask, "occupational_disease_quartz_dust_lung_cancer"] == 1) |
+         (dichotome_metadata.loc[occupational_mask, "occupational_disease_asbestosis"] == 1) |
+         (dichotome_metadata.loc[occupational_mask, "occupational_disease_asbestos_pleura"] == 1) |
+         (dichotome_metadata.loc[occupational_mask, "occupational_disease_asbestos_lung_cancer"] == 1) |
+         (dichotome_metadata.loc[occupational_mask, "occupational_disease_asbestos_larynx_cancer"] == 1) |
+         (dichotome_metadata.loc[occupational_mask, "occupational_disease_asbestos_mesothelioma"] == 1) |
+         (dichotome_metadata.loc[occupational_mask, "occupational_disease_ionized_radiation"] == 1)),
+        1, 0
+    )
+
+    dichotome_metadata.drop(columns=["small_rounded_opacities_profusion",
+                                     "small_rounded_opacities_size_p",
+                                     "small_rounded_opacities_size_q",
+                                     "small_rounded_opacities_size_r",
+                                     "small_rounded_opacities_upper_right",
+                                     "small_rounded_opacities_middle_right",
+                                     "small_rounded_opacities_lower_right",
+                                     "small_rounded_opacities_upper_left",
+                                     "small_rounded_opacities_middle_left",
+                                     "small_rounded_opacities_lower_left",
+                                     "small_irregular_opacities_size_s",
+                                     "small_irregular_opacities_size_t",
+                                     "small_irregular_opacities_size_u",
+                                     "small_irregular_opacities_profusion",
+                                     "small_irregular_opacities_upper_right",
+                                     "small_irregular_opacities_middle_right",
+                                     "small_irregular_opacities_lower_right",
+                                     "small_irregular_opacities_upper_left",
+                                     "small_irregular_opacities_middle_left",
+                                     "small_irregular_opacities_lower_left",
+                                     "mixed_shapes_1",
+                                     "mixed_shapes_2",
+                                     "mixed_shapes_profusion",
+                                     "mixed_shapes_upper_right",
+                                     "mixed_shapes_middle_right",
+                                     "mixed_shapes_lower_right",
+                                     "mixed_shapes_upper_left",
+                                     "mixed_shapes_middle_left",
+                                     "mixed_shapes_lower_left",
+                                     "large_opacities_nad",
+                                     "large_opacities_upper_right",
+                                     "large_opacities_middle_right",
+                                     "large_opacities_lower_right",
+                                     "large_opacities_upper_left",
+                                     "large_opacities_middle_left",
+                                     "large_opacities_lower_left",
+                                     "costophrenic_angle_obliteration_nad",
+                                     "costophrenic_angle_obliteration_right",
+                                     "costophrenic_angle_obliteration_left",
+                                     "diffuse_pleural_thickening_nad",
+                                     "diffuse_pleural_thickening_width_right",
+                                     "diffuse_pleural_thickening_width_left",
+                                     "diffuse_pleural_thickening_extent_right",
+                                     "diffuse_pleural_thickening_extent_left",
+                                     "diffuse_pleural_thickening_small_right",
+                                     "diffuse_pleural_thickening_face_on_right",
+                                     "diffuse_pleural_thickening_small_left",
+                                     "diffuse_pleural_thickening_face_on_left",
+                                     "diffuse_pleural_thickening_upper_right",
+                                     "diffuse_pleural_thickening_middle_right",
+                                     "diffuse_pleural_thickening_lower_right",
+                                     "diffuse_pleural_thickening_upper_left",
+                                     "diffuse_pleural_thickening_middle_left",
+                                     "diffuse_pleural_thickening_lower_left",
+                                     "localized_pleural_thickening_nad",
+                                     "localized_pleural_thickening_width_right",
+                                     "localized_pleural_thickening_width_left",
+                                     "localized_pleural_thickening_extent_right",
+                                     "localized_pleural_thickening_extent_left",
+                                     "localized_pleural_thickening_small_right",
+                                     "localized_pleural_thickening_small_left",
+                                     "localized_pleural_thickening_face_on_right",
+                                     "localized_pleural_thickening_face_on_left",
+                                     "localized_pleural_thickening_diaphragm_right",
+                                     "localized_pleural_thickening_diaphragm_left",
+                                     "localized_pleural_thickening_chest_wall_right",
+                                     "localized_pleural_thickening_chest_wall_left",
+                                     "pleural_calcification_nad",
+                                     "pleural_calcification_diaphragm_right",
+                                     "pleural_calcification_diaphragm_left",
+                                     "pleural_calcification_chest_wall_right",
+                                     "pleural_calcification_chest_wall_left",
+                                     "pleural_calcification_other_right",
+                                     "pleural_calcification_other_left",
+                                     "occupational_disease_nad",
+                                     "occupational_disease_silicosis",
+                                     "occupational_disease_silicotuberculosis",
+                                     "occupational_disease_quartz_dust_lung_cancer",
+                                     "occupational_disease_asbestosis",
+                                     "occupational_disease_asbestos_pleura",
+                                     "occupational_disease_asbestos_lung_cancer",
+                                     "occupational_disease_asbestos_larynx_cancer",
+                                     "occupational_disease_asbestos_mesothelioma",
+                                     "occupational_disease_ionized_radiation",
+                                     "comments"
+                                     ], inplace=True)
+    dichotome_metadata.to_csv(output_path, index=False)
+
+
+if __name__ == "__main__":
+    overall_filename = "D:\\Projects\\Thorax\\merged_data_original.csv"
+    metadata = pd.read_csv(overall_filename)
+    #create_splits(metadata, 5, "D:\\Projects\\Thorax\\DeboraThorax\\strat_diff_pl_thick_extendR_splits\\", "D:\\Projects\\Thorax\\DeboraThorax\\strat_diff_pl_thick_extendR_splits\\stratified_metadata.csv")
+    create_dichotome_metadata(metadata, "D:\\Projects\\Thorax\\dichotome_data.csv")
