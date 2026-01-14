@@ -2,3 +2,12 @@
 .venv/
 wandb/
 __pycache__/
+*.pth
+*.pt
+*.zip
+*.tar.gz
+data/
+Asbestosis_Data/
+*.csv
+*.xlsx
+.vscode/
