@@ -7,14 +7,14 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 main_path = "D:\\Projects\\Thorax\\DeboraThorax\\" #  "/home/debora/Documents/Projects/Thorax/"  #
-data = pd.read_excel(main_path + "found_merged_data.xlsx")  # merged_data_prepared.csv")
-print(data["Geburtsdatum"].describe())
-birth_col = pd.to_datetime(data["Geburtsdatum"], format="%d.%m.%Y")
-exam_col = pd.to_datetime(data["Untersuchungsdatum"], format="%d.%m.%Y")
-age = ((exam_col - birth_col) / pd.Timedelta(days=365.25)).astype(int)
-print(age.min())
-print(age.max())
-print(age.mean())
+data = pd.read_excel(main_path + "found_merged_data_pseudonym.xlsx")  # merged_data_prepared.csv")
+#print(data["Geburtsdatum"].describe())
+#birth_col = pd.to_datetime(data["Geburtsdatum"], format="%d.%m.%Y")
+#exam_col = pd.to_datetime(data["Untersuchungsdatum"], format="%d.%m.%Y")
+#age = ((exam_col - birth_col) / pd.Timedelta(days=365.25)).astype(int)
+#print(age.min())
+#print(age.max())
+#print(age.mean())
 
 
 symbol_columns = [col for col in data.columns if col.startswith('symbol')]

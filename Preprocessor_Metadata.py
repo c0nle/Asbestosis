@@ -319,24 +319,54 @@ def prepare_metadata(metadata_file: str, anforderungsnr_file: str, mapping_file:
     :param maximum_occurance_of_nans_per_col:
     :return:
     '''
-    # Step1: Read files and merge to get correct AnforderungsNummern
+
+    # Step1: Read files and merge to get correct AnforderungsNummern (pseudonymized workflow)
     metadata = pd.read_csv(metadata_file)
-    metadata['Geburtsdatum'] = pd.to_datetime(metadata['Geburtsdatum'], format='%d.%m.%Y')
-    metadata['Untersuchungsdatum'] = pd.to_datetime(metadata['Untersuchungsdatum'], format='%d.%m.%Y')
+    metadata.columns = metadata.columns.str.strip()
 
-    anford_nr = pd.read_csv(anforderungsnr_file,
-                            usecols=["Name", "Vorname", "Geburtsdatum", "Anforderungsnummer", "Untersuchungsdatum"])
-    anford_nr.rename(columns={"Name": "Nachname"}, inplace=True)
-    anford_nr['Geburtsdatum'] = pd.to_datetime(anford_nr['Geburtsdatum'], format='%m/%d/%Y')  # '%Y-%m-%d'
-    anford_nr['Untersuchungsdatum'] = pd.to_datetime(anford_nr['Untersuchungsdatum'], format='%m/%d/%Y')
+    # parse Untersuchungsdatum if present
+    if "Untersuchungsdatum" in metadata.columns:
+        metadata["Untersuchungsdatum"] = pd.to_datetime(metadata["Untersuchungsdatum"], errors="coerce")
 
-    metadata = metadata.merge(anford_nr, "inner", ["Nachname", "Vorname", "Geburtsdatum", "Untersuchungsdatum"])
+    #"sanity merge" with anford_nr using Anforderungsnummer + Untersuchungsdatum ---
+    if anforderungsnr_file is not None and os.path.isfile(anforderungsnr_file):
+        anford_nr = pd.read_csv(
+            anforderungsnr_file,
+            usecols=["Anforderungsnummer", "Untersuchungsdatum"]  # <- NO names, NO birthdate
+        )
+        anford_nr.columns = anford_nr.columns.str.strip()
+        anford_nr["Untersuchungsdatum"] = pd.to_datetime(anford_nr["Untersuchungsdatum"], errors="coerce")
+
+        # make sure key types match
+        if "Anforderungsnummer" in metadata.columns:
+            metadata["Anforderungsnummer"] = metadata["Anforderungsnummer"].astype(str)
+        anford_nr["Anforderungsnummer"] = anford_nr["Anforderungsnummer"].astype(str)
+
+        # inner-merge to keep only consistent entries (like before)
+        if "Anforderungsnummer" in metadata.columns and "Untersuchungsdatum" in metadata.columns:
+            metadata = metadata.merge(anford_nr, how="inner", on=["Anforderungsnummer", "Untersuchungsdatum"])
+
+    # --- Mapping merge to get fileID (same idea as old code) ---
     mapping = pd.read_csv(mapping_file)
-    mapping["medicoID"] = mapping["medicoID"].astype(str).apply(lambda x: x[:-4])
-    metadata["Anforderungsnummer_y"] = metadata["Anforderungsnummer_y"].astype(str)  # .apply(lambda x: x[:-2])
-    metadata = metadata.merge(mapping, "inner", left_on="Anforderungsnummer_y", right_on="medicoID")
-    metadata.rename(columns={"Anforderungsnummer_y": "Anforderungsnummer", "medicoID_x": "medicoID"}, inplace=True)
+    mapping.columns = mapping.columns.str.strip()
 
+    # shorten medicoID in mapping by removing last 4 characters if longer than 4
+    if "medicoID" in mapping.columns:
+        mapping["medicoID"] = mapping["medicoID"].astype(str).apply(lambda x: x[:-4] if len(x) > 4 else x)
+
+    # Use Anforderungsnummer to join mapping.medicoID 
+    if "Anforderungsnummer" in metadata.columns and "medicoID" in mapping.columns:
+        metadata["Anforderungsnummer"] = metadata["Anforderungsnummer"].astype(str)
+        metadata = metadata.merge(mapping, how="inner", left_on="Anforderungsnummer", right_on="medicoID")
+        # keep medicoID from your metadata if you want; mapping may also have medicoID
+
+    # --- ensure medicoID column exists (merges may create medicoID_x/medicoID_y) ---
+    if "medicoID" not in metadata.columns:
+        for alt in ["medicoID_x", "medicoID_y", "medicoID "]:
+            if alt in metadata.columns:
+                metadata.rename(columns={alt: "medicoID"}, inplace=True)
+                break
+                
     # Step2: replace nan entries with -1
     metadata.fillna(-1, inplace=True)
 
