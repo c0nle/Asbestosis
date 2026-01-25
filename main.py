@@ -2,7 +2,9 @@ import gc
 import os
 import numpy as np
 import pandas as pd
+import re
 
+from pathlib import Path
 import PIL.Image
 import torch
 from torch import nn, optim, GradScaler
@@ -35,34 +37,59 @@ class MultiOutputResNet(nn.Module):
         x = self.resnet(x)
         return [head(x) for head in self.output_heads]  # Return multiple outputs
 
-
 class X_rayImageDataset(Dataset):
-    def __init__(self, annotations, img_dir, label_column: str, transform=None):
+    def __init__(self, annotations: pd.DataFrame, img_dir: str, label_column: str,
+                 img_id_col: str, transform=None):
         self.img_dir = img_dir
-        self.img_labels = self.get_available_data(annotations)
         self.transform = transform
         self.label_column = label_column
-        self.label_index_mapping = {label: idx for idx, label in enumerate(sorted(self.img_labels[self.label_column].unique()))}
-        self.hot_encodings = np.eye(len(self.label_index_mapping))
+        self.img_id_col = img_id_col
 
-    def get_available_data(self, annotations):
-        available_annotations = []
-        for filename in annotations["fileID"]:
-            if os.path.exists(self.img_dir + str(int(filename)) + '.zip'):
-                available_annotations.append(int(filename))
-        return annotations[annotations['fileID'].isin(available_annotations)]
+        # Build mapping: extracted_key -> filepath
+        self.file_map = {}
+        for f in os.listdir(img_dir):
+            if not f.endswith(".png"):
+                continue
+            stem = Path(f).stem  # filename without .png
+
+            # key = part before '-' if present, else leading digits
+            key = stem.split("-")[0]
+            m = re.match(r"^\d+", key)
+            if m:
+                key = m.group(0)
+
+            # store first occurrence
+            if key not in self.file_map:
+                self.file_map[key] = os.path.join(img_dir, f)
+
+        ann = annotations.copy()
+        ann.columns = ann.columns.str.strip()
+        ann[self.img_id_col] = ann[self.img_id_col].astype(str)
+
+        # keep only rows with an existing image key
+        self.img_labels = ann[ann[self.img_id_col].isin(self.file_map.keys())].reset_index(drop=True)
+
+        self.label_index_mapping = {
+            label: idx for idx, label in enumerate(sorted(self.img_labels[self.label_column].unique()))
+        }
+
+        print(f"[Dataset] Using img_id_col='{img_id_col}', matched {len(self.img_labels)}/{len(ann)} rows to PNGs.")
 
     def __len__(self):
         return len(self.img_labels)
 
     def __getitem__(self, idx):
-        img_path = self.img_dir + str(int(self.img_labels.iloc[idx]['fileID'])) + '.zip'
-        image = PIL.Image.open(img_path)
-        label = self.img_labels.iloc[idx][self.label_column]
-        label = self.hot_encodings[self.label_index_mapping[label]] # one hot encoding for label
+        img_key = self.img_labels.iloc[idx][self.img_id_col]
+        img_path = self.file_map[img_key]
+
+        image = PIL.Image.open(img_path).convert("L")
+        label_raw = self.img_labels.iloc[idx][self.label_column]
+        label = self.label_index_mapping[label_raw]
+
         if self.transform:
             image = self.transform(image)
-        return image, label, img_path
+
+        return image, torch.tensor(label, dtype=torch.long), img_path
 
 
 def run_epoch(model, optimizer, criterion, scaler, data_loader, train=True, show_figs=True):
@@ -209,17 +236,17 @@ if __name__ == '__main__':
     ])
 
     # Datenvorverarbeitung: fehlende Werte handeln; einlesen
-    base_folder = "/hpcwork/it336446/Data/DeboraThorax/"  #  "D:\\Projects\\Thorax\\DeboraThorax\\"  #
+    base_folder = "/hpcwork/rwth1954/Asbestosis_Data/"  #  "D:\\Projects\\Thorax\\DeboraThorax\\"  #
     root_folder = base_folder + "png/" 
     mapping_file = base_folder + "mapping.csv"
     fold_folder = base_folder + "strat_dichotom_splits\\"
 
-    metadata_file = base_folder + "dichotome_data.csv"
-    anford_nr_file = base_folder + "table.csv"
+    metadata_file = base_folder + "dichotome_data_pseudonym.csv"
+    anford_nr_file = base_folder + "table_pseudonym.csv"
     nan_thresh = 999
-    batch_size = 24
+    batch_size = 2
     learning_rate = 0.01
-    number_of_epochs = 40
+    number_of_epochs = 1
     fold = 0
     # column_groups keys are general, symbol, rounded, irregular, mixed, large, pleural, occupational
     column_group = "mixed"
@@ -261,12 +288,12 @@ if __name__ == '__main__':
         # dataloader
         n_workers = mp.cpu_count() if mp.cpu_count() < 25 else 24
         gen = torch.Generator()
-        train_dataset = X_rayImageDataset(current_train_metadata, root_folder, label_column=criterion_label, transform=preprocess)
+        train_dataset = X_rayImageDataset(current_train_metadata, root_folder, label_column=criterion_label, img_id_col = "id",transform=preprocess)
         train_sampler = RandomSampler(train_dataset, replacement=False, generator=gen)
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False, num_workers=n_workers, sampler=train_sampler,
                             generator=gen, drop_last=True, pin_memory=False)
 
-        test_dataset = X_rayImageDataset(current_test_metadata, root_folder, label_column=column_groups[column_group][0], transform=preprocess)
+        test_dataset = X_rayImageDataset(current_test_metadata, root_folder, label_column=criterion_label, img_id_col = "id", transform=preprocess)
         test_sampler = RandomSampler(test_dataset, replacement=False, generator=gen)
         test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=n_workers, sampler=test_sampler,
                             generator=gen, drop_last=True, pin_memory=False)
