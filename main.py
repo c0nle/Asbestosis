@@ -7,42 +7,143 @@ import re
 from pathlib import Path
 import PIL.Image
 import torch
-from torch import nn, optim, GradScaler
-from torch.utils.data import Dataset, RandomSampler, DataLoader
+
+from torch import nn, optim
+from torch.cuda.amp import GradScaler
+
+from torchvision.models import vit_b_16, ViT_B_16_Weights
+from torchvision.transforms.v2 import (
+    ColorJitter, RandomResizedCrop, RandomRotation, ToTensor, Compose, Normalize
+)
+
 from torchvision.models import resnet50, ResNet50_Weights
-from torchvision.transforms.v2 import ColorJitter, RandomResizedCrop, RandomRotation, ToTensor, Compose
+
+from torch.utils.data import Dataset, RandomSampler, DataLoader
 import torch.multiprocessing as mp
 from sklearn.metrics import RocCurveDisplay, roc_curve, auc
 from sklearn.preprocessing import LabelBinarizer
 from itertools import cycle
 import matplotlib.pyplot as plt
+from sklearn.metrics import roc_auc_score
 
 import Preprocessor_Metadata
 import wandb
 
+# -------------------------
+# Helpers
+# -------------------------
+def gray_to_rgb(x: torch.Tensor) -> torch.Tensor:
+    """(1,H,W) -> (3,H,W) for pretrained ViT"""
+    return x.repeat(3, 1, 1)
 
-class MultiOutputResNet(nn.Module):
-    def __init__(self, number_of_classes: list):  # Define number of outputs per task
-        super(MultiOutputResNet, self).__init__()
-        self.resnet = resnet50(pretrained=True)
-        in_features = self.resnet.fc.in_features
-        self.resnet.fc = nn.Identity()  # Remove original FC layer
 
-        # Create multiple output heads dynamically
-        self.output_heads = nn.ModuleList([
-            nn.Linear(in_features, num_classes) for num_classes in number_of_classes
-        ])
+def log_auc_per_task(y_true: torch.Tensor, y_prob: torch.Tensor, mask: torch.Tensor,
+                     criteria_cols: list, split: str = "test"):
+    """
+    y_true: (N,T) values {0,1,-1}
+    y_prob: (N,T) values [0,1]
+    mask:   (N,T) values {0,1} where 1 means label exists
+    """
+    y_true_np = y_true.numpy()
+    y_prob_np = y_prob.numpy()
+    mask_np = mask.numpy()
+
+    for t, name in enumerate(criteria_cols):
+        valid = mask_np[:, t] > 0.5
+        if valid.sum() < 10:
+            continue
+
+        yt = y_true_np[valid, t].astype(int)
+        yp = y_prob_np[valid, t].astype(float)
+
+        # AUC needs both classes
+        if len(np.unique(yt)) < 2:
+            continue
+
+        try:
+            auc_val = roc_auc_score(yt, yp)
+        except Exception:
+            continue
+
+        wandb.log({f"AUC/{split}/{name}": auc_val})
+
+def log_task_counts(y_true: torch.Tensor, mask: torch.Tensor, criteria_cols: list, split: str = "train"):
+    """
+    Logs how many valid pos/neg labels exist per task.
+    y_true: (N,T) {0,1,-1}
+    mask:   (N,T) {0,1}
+    """
+    y = y_true.numpy()
+    m = mask.numpy()
+
+    for t, name in enumerate(criteria_cols):
+        valid = m[:, t] > 0.5
+        n_valid = int(valid.sum())
+        if n_valid == 0:
+            continue
+        pos = int((y[valid, t] == 1).sum())
+        neg = int((y[valid, t] == 0).sum())
+
+        wandb.log({
+            f"count/{split}/{name}/valid": n_valid,
+            f"count/{split}/{name}/pos": pos,
+            f"count/{split}/{name}/neg": neg,
+        })
+# -------------------------
+# Model
+# -------------------------
+class MultiOutputViT(nn.Module):
+    """
+    Multi-task binary classification:
+    - ViT backbone (pretrained)
+    - one head per criterion, each outputs 1 logit
+    Output: logits (B, T)
+    """
+    def __init__(self, n_tasks: int):
+        super().__init__()
+        self.vit = vit_b_16(weights=ViT_B_16_Weights.DEFAULT)
+
+        in_features = self.vit.heads.head.in_features
+        self.vit.heads = nn.Identity()  # remove original classifier head
+
+        self.output_heads = nn.ModuleList([nn.Linear(in_features, 1) for _ in range(n_tasks)])
 
     def forward(self, x):
-        x = self.resnet(x)
-        return [head(x) for head in self.output_heads]  # Return multiple outputs
+        feats = self.vit(x)  # (B, F)
+        logits = [head(feats) for head in self.output_heads]  # list of (B,1)
+        return torch.cat(logits, dim=1)  # (B, T)
 
+
+class MultiOutputResNet(nn.Module):
+    """
+    Multi-task binary classification:
+    - shared ResNet50 backbone
+    - one head per criterion, each outputs 1 logit
+    Output shape: (B, T)
+    """
+    def __init__(self, n_tasks: int):
+        super().__init__()
+        self.resnet = resnet50(weights=ResNet50_Weights.DEFAULT)
+        in_features = self.resnet.fc.in_features
+        self.resnet.fc = nn.Identity()
+
+        self.output_heads = nn.ModuleList([nn.Linear(in_features, 1) for _ in range(n_tasks)])
+
+    def forward(self, x):
+        feats = self.resnet(x)                   # (B, F)
+        logits = [head(feats) for head in self.output_heads]  # list of (B,1)
+        return torch.cat(logits, dim=1)          # (B, T)
+
+
+# -------------------------
+# Dataset
+# -------------------------
 class X_rayImageDataset(Dataset):
-    def __init__(self, annotations: pd.DataFrame, img_dir: str, label_column: str,
+    def __init__(self, annotations: pd.DataFrame, img_dir: str, criteria_cols: list,
                  img_id_col: str, transform=None):
         self.img_dir = img_dir
         self.transform = transform
-        self.label_column = label_column
+        self.criteria_cols = criteria_cols
         self.img_id_col = img_id_col
 
         # Build mapping: extracted_key -> filepath
@@ -69,11 +170,8 @@ class X_rayImageDataset(Dataset):
         # keep only rows with an existing image key
         self.img_labels = ann[ann[self.img_id_col].isin(self.file_map.keys())].reset_index(drop=True)
 
-        self.label_index_mapping = {
-            label: idx for idx, label in enumerate(sorted(self.img_labels[self.label_column].unique()))
-        }
-
         print(f"[Dataset] Using img_id_col='{img_id_col}', matched {len(self.img_labels)}/{len(ann)} rows to PNGs.")
+        print(f"[Dataset] n_tasks={len(self.criteria_cols)}")
 
     def __len__(self):
         return len(self.img_labels)
@@ -83,16 +181,21 @@ class X_rayImageDataset(Dataset):
         img_path = self.file_map[img_key]
 
         image = PIL.Image.open(img_path).convert("L")
-        label_raw = self.img_labels.iloc[idx][self.label_column]
-        label = self.label_index_mapping[label_raw]
+
+        # labels vector (T,)
+        y = self.img_labels.iloc[idx][self.criteria_cols].values.astype(np.float32)
+        y = torch.from_numpy(y)  # (T,)
 
         if self.transform:
             image = self.transform(image)
 
-        return image, torch.tensor(label, dtype=torch.long), img_path
+        return image, y, img_path
 
 
-def run_epoch(model, optimizer, criterion, scaler, data_loader, train=True, show_figs=True):
+# -------------------------
+# Training / Eval
+# -------------------------
+def run_epoch(model, optimizer, bce, scaler, data_loader, train=True, show_figs=False):
     if train:
         model.train()
         suffix = "train"
@@ -101,48 +204,52 @@ def run_epoch(model, optimizer, criterion, scaler, data_loader, train=True, show
         suffix = "eval"
 
     torch.set_grad_enabled(train)
-    epoch_loss = 0
-    counter = -1
-    set_length = len(data_loader)
-    y_true = torch.zeros((set_length, batch_size, len(data_loader.dataset.hot_encodings)), dtype=torch.int)  # true labels
-    y_probs = torch.zeros((set_length, batch_size, len(data_loader.dataset.hot_encodings)), dtype=torch.float)  # predicted probabilities for cancer
-    for batch_id, (data, ground_truth, path) in enumerate(data_loader):
-        counter += 1
-        if counter % 100 == 0:
+    epoch_loss = 0.0
+
+    y_true_list, y_prob_list, mask_list = [], [], []
+
+    for batch_id, (data, targets, path) in enumerate(data_loader):
+        if show_figs and batch_id % 200 == 0:
             gc.collect()
-            if show_figs:
-                # Create a figure and axis objects for depth dimension (images of size 256x256)
-                plt.imshow(torch.clip(data[0, 0], 0, 100), cmap='gray', interpolation=None)
-                plt.title(path[0].split(os.sep)[-1])
-                plt.show()
-                plt.close()
 
-        data = data.to(device)
-        ground_truth = ground_truth.to(device)
-        optimizer.zero_grad()
+        data = data.to(device, non_blocking=True)              # (B,3,H,W)
+        targets = targets.to(device, non_blocking=True)        # (B,T)
 
-        with torch.autocast(device_type=device, dtype=torch.float16):
-            pred_probs = model(data)
-            loss = criterion(pred_probs, ground_truth)  #TODO
+        if train:
+            optimizer.zero_grad(set_to_none=True)
+
+        with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=(device.type == "cuda")):
+            logits = model(data)                               # (B,T)
+
+            # mask out missing labels (-1)
+            mask = (targets != -1).float()                     # (B,T)
+            targets_clean = torch.clamp(targets, 0, 1)         # -1 -> 0 dummy
+
+            loss_mat = bce(logits, targets_clean)              # (B,T)
+            loss = (loss_mat * mask).sum() / mask.sum().clamp_min(1.0)
+
         if train:
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
             lr_scheduler.step()
 
-        y_true[batch_id] = ground_truth
-        y_probs[batch_id] = pred_probs
+        probs = torch.sigmoid(logits)                          # (B,T)
 
-        wandb.log({f"loss/{suffix}": loss.item()}, commit=False)
-        epoch_loss += loss.item()
-        print('{} step loss: {}'.format(suffix, loss.item()))
-    avg_epoch_loss = epoch_loss / len(data_loader)
+        y_true_list.append(targets.detach().cpu())
+        y_prob_list.append(probs.detach().cpu())
+        mask_list.append(mask.detach().cpu())
+
+        wandb.log({f"loss/{suffix}": float(loss.item())}, commit=False)
+        epoch_loss += float(loss.item())
+
+    avg_epoch_loss = epoch_loss / max(len(data_loader), 1)
     wandb.log({f"average_loss/{suffix}": avg_epoch_loss})
-    print('{} {}: \tAverage Loss: {:.6f}'.format(
-        suffix,
-        "Epoch " + str(epoch),
-        avg_epoch_loss))
-    return y_true, y_probs
+
+    y_true = torch.cat(y_true_list, dim=0)   # (N,T)
+    y_prob = torch.cat(y_prob_list, dim=0)   # (N,T)
+    mask = torch.cat(mask_list, dim=0)       # (N,T)
+    return y_true, y_prob, mask
 
 def compute_roc_one_vs_rest(y_true, y_scores, classes, category_label):
     label_binarizer = LabelBinarizer().fit(y_scores)
@@ -227,111 +334,173 @@ def compute_roc_curve(y_true, y_scores, plot=False, title_suffix=''):
 
 
 if __name__ == '__main__':
+    # ViT pretrained expects normalized RGB-like input
     preprocess = Compose([
         RandomResizedCrop(224),
         RandomRotation(5),
         ColorJitter(0.3),
         ToTensor(),
-        #transforms.Normalize(0.5, 0.5),
+        gray_to_rgb,
+        Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
     ])
 
-    # Datenvorverarbeitung: fehlende Werte handeln; einlesen
-    base_folder = "/hpcwork/rwth1954/Asbestosis_Data/"  #  "D:\\Projects\\Thorax\\DeboraThorax\\"  #
-    root_folder = base_folder + "png/" 
-    mapping_file = base_folder + "mapping.csv"
-    fold_folder = base_folder + "strat_dichotom_splits\\"
+    # Paths / config
+    base_folder = "/hpcwork/rwth1954/Asbestosis_Data/"
+    root_folder = os.path.join(base_folder, "png")
+    mapping_file = os.path.join(base_folder, "mapping.csv")
+    PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+    fold_folder = os.path.join(PROJECT_DIR, "splits")
+    os.makedirs(fold_folder, exist_ok=True)
 
-    metadata_file = base_folder + "dichotome_data_pseudonym.csv"
-    anford_nr_file = base_folder + "table_pseudonym.csv"
+    metadata_file = os.path.join(base_folder, "dichotome_data_pseudonym.csv")
+    anford_nr_file = os.path.join(base_folder, "table_pseudonym.csv")
+
     nan_thresh = 999
-    batch_size = 2
-    learning_rate = 0.01
-    number_of_epochs = 1
+    batch_size = 8
+    learning_rate = 3e-4  # IMPORTANT for ViT
+    number_of_epochs = 10
     fold = 0
-    # column_groups keys are general, symbol, rounded, irregular, mixed, large, pleural, occupational
+
+    # choose which group of labels to train together
     column_group = "mixed"
-    criterion_label = "mixed_shapes"  #  diffuse_pleural_thickening_nad
+
+    # stratification label for folds (single label just to build folds)
+    # keep as one stable binary label; training itself is multi-task
+    training_label_for_split = "mixed_shapes"
 
     # Split Train-Test:
-    fold_splitted_metadata_filename = fold_folder + metadata_file.split(os.sep)[-1].replace('.csv', '_stratified_folds.csv')
+    fold_splitted_metadata_filename = os.path.join(
+        fold_folder,
+        Path(metadata_file).name.replace('.csv', '_stratified_folds.csv')
+    )
+
     if not os.path.isfile(fold_splitted_metadata_filename):
-        metadata = Preprocessor_Metadata.prepare_metadata(metadata_file, anford_nr_file, mapping_file, nan_thresh, True)
-        metadata = Preprocessor_Metadata.create_splits(metadata,
-                                                       5,
-                                                       fold_folder,
-                                                       fold_splitted_metadata_filename,
-                                                       criterion_label)
+        metadata = Preprocessor_Metadata.prepare_metadata(
+            metadata_file, anford_nr_file, mapping_file, nan_thresh, True
+        )
+        metadata = Preprocessor_Metadata.create_splits(
+            metadata,
+            5,
+            fold_folder,
+            fold_splitted_metadata_filename,
+            training_label_for_split
+        )
     else:
         metadata = pd.read_csv(fold_splitted_metadata_filename)
 
     prepared_metadata = metadata
-    column_groups = Preprocessor_Metadata.get_column_name_groups(metadata, True)  # group columns into logical
+    column_groups = Preprocessor_Metadata.get_column_name_groups(metadata, True)
 
-    #for criterion_label in column_groups[column_group]:
-    if criterion_label in metadata.keys() and criterion_label not in column_groups["general"]:
-        metadata = prepared_metadata[prepared_metadata[criterion_label] != -1]
-        test_metadata = metadata[metadata[f'Fold{fold}'] == 'test']
-        train_metadata = metadata[metadata[f'Fold{fold}'] == 'train']
-        #print(criterion_label + ":\n\ttrain --- pos: " + str(len(train_metadata[train_metadata[criterion_label] == 1])) + " neg: " + str(len(train_metadata[train_metadata[criterion_label] == 0])) +
-        #      "\n\ttest --- pos: " + str(len(test_metadata[test_metadata[criterion_label] == 1])) + " neg: " + str(len(test_metadata[test_metadata[criterion_label] == 0])))
+    # Build multi-task criteria list from the chosen group
+    candidate_cols = [c for c in column_groups[column_group]
+                      if c in prepared_metadata.columns and c not in column_groups["general"]]
 
-        current_train_metadata = train_metadata[[col for col in column_groups[column_group] if col in metadata.columns]]
-        current_test_metadata = test_metadata[[col for col in column_groups[column_group] if col in metadata.columns]]
-        num_classes = len(metadata[criterion_label].unique())
-        is_binary_classification = num_classes == 2
+    def is_binary_series(s: pd.Series) -> bool:
+        vals = set(pd.unique(s.dropna()))
+        return vals.issubset({-1, 0, 1})
 
-        model = resnet50(weights=ResNet50_Weights)
+    criteria_cols = [c for c in candidate_cols if is_binary_series(prepared_metadata[c])]
+    print(f"[Main] Using {len(criteria_cols)} binary criteria from group '{column_group}'")
 
-        model.conv1 = torch.nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
-        model.fc = torch.nn.Linear(model.fc.in_features, num_classes)
+    # Keep only rows where at least one task label exists
+    metadata = prepared_metadata.copy()
+    if len(criteria_cols) == 0:
+        raise RuntimeError(f"No binary criteria found for group '{column_group}'")
 
-        # dataloader
-        n_workers = mp.cpu_count() if mp.cpu_count() < 25 else 24
-        gen = torch.Generator()
-        train_dataset = X_rayImageDataset(current_train_metadata, root_folder, label_column=criterion_label, img_id_col = "id",transform=preprocess)
-        train_sampler = RandomSampler(train_dataset, replacement=False, generator=gen)
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False, num_workers=n_workers, sampler=train_sampler,
-                            generator=gen, drop_last=True, pin_memory=False)
+    metadata = metadata[(metadata[criteria_cols] != -1).any(axis=1)]
+    test_metadata = metadata[metadata[f'Fold{fold}'] == 'test']
+    train_metadata = metadata[metadata[f'Fold{fold}'] == 'train']
 
-        test_dataset = X_rayImageDataset(current_test_metadata, root_folder, label_column=criterion_label, img_id_col = "id", transform=preprocess)
-        test_sampler = RandomSampler(test_dataset, replacement=False, generator=gen)
-        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=n_workers, sampler=test_sampler,
-                            generator=gen, drop_last=True, pin_memory=False)
+    needed_cols = ["id"] + criteria_cols
+    current_train_metadata = train_metadata[needed_cols]
+    current_test_metadata = test_metadata[needed_cols]
 
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        optimizer = optim.AdamW(model.parameters(), lr=learning_rate)
-        lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, learning_rate, number_of_epochs * len(train_loader))
+    # Model
+    model = MultiOutputViT(n_tasks=len(criteria_cols))
 
-        wandb.init(project="Asbestosis", config={
-            "learning-rate": learning_rate,
-            "dataset:": root_folder,
-            "split folder": fold_folder,
-            "number of training samples": len(train_loader.dataset),
-            "number of test samples": len(test_loader.dataset),
+    # Dataloader
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    n_workers = mp.cpu_count() if mp.cpu_count() < 25 else 24
+    gen = torch.Generator()
+
+    train_dataset = X_rayImageDataset(
+        current_train_metadata, root_folder, criteria_cols=criteria_cols, img_id_col="id", transform=preprocess
+    )
+    train_sampler = RandomSampler(train_dataset, replacement=False, generator=gen)
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=n_workers,
+        sampler=train_sampler,
+        generator=gen,
+        drop_last=True,
+        pin_memory=(device.type == "cuda"),
+    )
+
+    test_dataset = X_rayImageDataset(
+        current_test_metadata, root_folder, criteria_cols=criteria_cols, img_id_col="id", transform=preprocess
+    )
+    test_sampler = RandomSampler(test_dataset, replacement=False, generator=gen)
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=n_workers,
+        sampler=test_sampler,
+        generator=gen,
+        drop_last=True,
+        pin_memory=(device.type == "cuda"),
+    )
+
+    optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=0.05)
+    lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        optimizer, max_lr=learning_rate, total_steps=number_of_epochs * len(train_loader)
+    )
+
+    wandb.init(
+        project="Asbestosis",
+        config={
+            "learning_rate": learning_rate,
+            "dataset": root_folder,
+            "split_folder": fold_folder,
+            "n_train": len(train_loader.dataset),
+            "n_test": len(test_loader.dataset),
             "epochs": number_of_epochs,
-            "batch size": batch_size,
+            "batch_size": batch_size,
             "optimizer": str(optimizer),
-            "Augmentation": str(preprocess),
-            "Machine": "HPC",
-            "Pretrained": str(ResNet50_Weights),
-            "train criteria": criterion_label,
-            "Fold": fold,
-            "metadata": metadata_file
-        }, name="b={}_l={}_n={}_fold={}_{}".format(batch_size, learning_rate, number_of_epochs, fold, criterion_label))
+            "augmentation": str(preprocess),
+            "machine": "HPC",
+            "pretrained": str(ViT_B_16_Weights.DEFAULT),
+            "column_group": column_group,
+            "criteria_cols": criteria_cols,
+            "n_tasks": len(criteria_cols),
+            "fold": fold,
+            "metadata": metadata_file,
+        },
+        name=f"vit_b={batch_size}_lr={learning_rate}_n={number_of_epochs}_fold={fold}_group={column_group}",
+    )
 
-        criterion = nn.BCEWithLogitsLoss() if is_binary_classification else nn.CrossEntropyLoss()
-        scaler = GradScaler()
-        model = model.to(device)
-        for epoch in range(number_of_epochs):
-            y_true, y_probs = run_epoch(model, optimizer, criterion, scaler, train_loader, train=True, show_figs=False)
-            if epoch % 10 == 0 and is_binary_classification:
-                compute_roc_curve(y_true, y_probs, plot=False, title_suffix="train")
+    # Loss + AMP
+    bce = nn.BCEWithLogitsLoss(reduction="none")
+    scaler = GradScaler(enabled=(device.type == "cuda"))
 
-        y_true_eval, y_probs_eval = run_epoch(model, optimizer, criterion, scaler, test_loader, train=False)
-        if is_binary_classification:
-            compute_roc_curve(y_true_eval, y_probs_eval, plot=True, title_suffix="test")
-        else:
-            compute_roc_one_vs_rest(y_true_eval, y_probs_eval, prepared_metadata[criterion_label].unique(), criterion_label)
+    model = model.to(device)
 
-        torch.save(model.state_dict(), os.path.join(base_folder, f'asbestosis_n{number_of_epochs}_b{batch_size}_label={criterion_label}.pth'))
-        wandb.finish()
+    for epoch in range(number_of_epochs):
+        y_true_tr, y_prob_tr, mask_tr = run_epoch(
+            model, optimizer, bce, scaler, train_loader, train=True, show_figs=False
+        )
+        log_auc_per_task(y_true_tr, y_prob_tr, mask_tr, criteria_cols, split="train")
+        log_task_counts(y_true_tr, mask_tr, criteria_cols, split="train")
+
+    y_true_ev, y_prob_ev, mask_ev = run_epoch(
+        model, optimizer, bce, scaler, test_loader, train=False, show_figs=False
+    )
+    log_auc_per_task(y_true_ev, y_prob_ev, mask_ev, criteria_cols, split="test")
+    log_task_counts(y_true_ev, mask_ev, criteria_cols, split="test")
+    torch.save(
+        model.state_dict(),
+        os.path.join(base_folder, f"asbestosis_vit_multitask_{column_group}_n{number_of_epochs}_b{batch_size}.pth")
+    )
+    wandb.finish()

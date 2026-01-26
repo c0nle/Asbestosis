@@ -245,25 +245,45 @@ def split_at_dash(value):
         return np.nan, np.nan
 
 
-def create_splits(metadata: pd.DataFrame, n_testfolds: int, output_folder: str, output_filename: str,  training_label="mixed_shapes"):
-    metadata = metadata[metadata[training_label] != -1]
-    if not os.path.exists(output_folder):
-        os.mkdir(output_folder)
+def create_splits(metadata: pd.DataFrame, n_testfolds: int, output_folder: str,
+                  output_filename: str, training_label="mixed_shapes"):
+    """
+    Creates stratified group k-fold splits and adds Fold0..Fold{n-1} columns with 'train'/'test'.
+    - Groups by medicoID to avoid leakage
+    - Stratifies by training_label if possible
+    """
+    # Only filter if label exists
+    if training_label is not None and training_label in metadata.columns:
+        metadata = metadata[metadata[training_label] != -1]
+
+    os.makedirs(output_folder, exist_ok=True)
 
     for fold in range(n_testfolds):
         metadata[f'Fold{fold}'] = ''
-    strat = StratifiedGroupKFold(n_splits=n_testfolds, shuffle=True, random_state=0)
-    for n_fold, test_fold in enumerate(
-            strat.split(metadata, y=metadata[training_label], groups=metadata['medicoID'])):
-        train_split = metadata.loc[test_fold[0]]
-        test_split = metadata.loc[test_fold[1]]
 
-        test_split.to_csv(output_folder + "stratified_test_set-f{}.csv".format(n_fold), index=False)
-        train_split.to_csv(output_folder + "stratified_train_set-f{}.csv".format(n_fold), index=False)
+    # If training_label missing or not usable, fall back to group split without stratification
+    can_stratify = (training_label is not None and training_label in metadata.columns)
 
-        metadata.loc[metadata['medicoID'].isin(test_split['medicoID']), f'Fold{n_fold}'] = 'test'
-        metadata.loc[metadata['medicoID'].isin(train_split['medicoID']), f'Fold{n_fold}'] = 'train'
-    metadata.to_csv(output_filename)
+    if can_stratify:
+        strat = StratifiedGroupKFold(n_splits=n_testfolds, shuffle=True, random_state=0)
+        split_iter = strat.split(metadata, y=metadata[training_label], groups=metadata['medicoID'])
+    else:
+        # simple group split fallback
+        from sklearn.model_selection import GroupKFold
+        gkf = GroupKFold(n_splits=n_testfolds)
+        split_iter = gkf.split(metadata, groups=metadata['medicoID'])
+
+    for n_fold, (train_idx, test_idx) in enumerate(split_iter):
+        train_split = metadata.iloc[train_idx]
+        test_split = metadata.iloc[test_idx]
+
+        test_split.to_csv(os.path.join(output_folder, f"stratified_test_set-f{n_fold}.csv"), index=False)
+        train_split.to_csv(os.path.join(output_folder, f"stratified_train_set-f{n_fold}.csv"), index=False)
+
+        metadata.loc[metadata.index.isin(test_split.index), f'Fold{n_fold}'] = 'test'
+        metadata.loc[metadata.index.isin(train_split.index), f'Fold{n_fold}'] = 'train'
+
+    metadata.to_csv(output_filename, index=False)
     return metadata
 
 
