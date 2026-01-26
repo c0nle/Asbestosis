@@ -411,8 +411,7 @@ def prepare_metadata(metadata_file: str, anforderungsnr_file: str, mapping_file:
                        "small_rounded_opacities_profusion"]
 
     # find other columns to drop: all that have more nan entries than nan_thresh
-    nan_per_column_count = [(col_name, len(metadata[metadata[col_name] != metadata[col_name]])) for col_name in
-                            metadata.columns]
+    nan_per_column_count = (metadata == -1).sum()
     for col_name, nan_count in nan_per_column_count:
         if nan_count > maximum_occurance_of_nans_per_col:
             col_to_drop.append(col_name)
