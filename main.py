@@ -335,11 +335,21 @@ def compute_roc_curve(y_true, y_scores, plot=False, title_suffix=''):
 
 if __name__ == '__main__':
     # ViT pretrained expects normalized RGB-like input
-    preprocess = Compose([
+    train_tf = Compose([
         RandomResizedCrop(224),
         RandomRotation(5),
         ColorJitter(0.3),
-        ToTensor(),
+        ToImage(),
+        ToDtype(torch.float32, scale=True),
+        gray_to_rgb,  # oder später entfernen, siehe 1.4
+        Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+    ])
+
+    test_tf = Compose([
+        Resize(256),
+        CenterCrop(224),
+        ToImage(),
+        ToDtype(torch.float32, scale=True),
         gray_to_rgb,
         Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
     ])
@@ -424,7 +434,7 @@ if __name__ == '__main__':
     gen = torch.Generator()
 
     train_dataset = X_rayImageDataset(
-        current_train_metadata, root_folder, criteria_cols=criteria_cols, img_id_col="id", transform=preprocess
+        current_train_metadata, root_folder, criteria_cols=criteria_cols, img_id_col="id", transform=train_tf
     )
     train_sampler = RandomSampler(train_dataset, replacement=False, generator=gen)
     train_loader = DataLoader(
@@ -439,7 +449,7 @@ if __name__ == '__main__':
     )
 
     test_dataset = X_rayImageDataset(
-        current_test_metadata, root_folder, criteria_cols=criteria_cols, img_id_col="id", transform=preprocess
+        current_test_metadata, root_folder, criteria_cols=criteria_cols, img_id_col="id", transform=test_tf
     )
     test_sampler_rnd = RandomSampler(test_dataset, replacement=False, generator=gen)
     test_sampler = SequentialSampler(test_dataset)
