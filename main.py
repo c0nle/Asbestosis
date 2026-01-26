@@ -434,14 +434,15 @@ if __name__ == '__main__':
         num_workers=n_workers,
         sampler=train_sampler,
         generator=gen,
-        drop_last=True,
+        drop_last=False,
         pin_memory=(device.type == "cuda"),
     )
 
     test_dataset = X_rayImageDataset(
         current_test_metadata, root_folder, criteria_cols=criteria_cols, img_id_col="id", transform=preprocess
     )
-    test_sampler = RandomSampler(test_dataset, replacement=False, generator=gen)
+    test_sampler_rnd = RandomSampler(test_dataset, replacement=False, generator=gen)
+    test_sampler = SequentialSampler(test_dataset)
     test_loader = DataLoader(
         test_dataset,
         batch_size=batch_size,
@@ -449,7 +450,7 @@ if __name__ == '__main__':
         num_workers=n_workers,
         sampler=test_sampler,
         generator=gen,
-        drop_last=True,
+        drop_last=False,
         pin_memory=(device.type == "cuda"),
     )
 
