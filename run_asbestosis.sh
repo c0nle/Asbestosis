@@ -26,7 +26,7 @@ cd "${PROJECT_DIR}"
 export PYTHONUNBUFFERED=1
 
 # wandb soll nicht fragen -> offline
-export WANDB_MODE=offline
+export WANDB_MODE=online
 export WANDB_SILENT=true
 
 # Optional: Threads sinnvoll begrenzen
