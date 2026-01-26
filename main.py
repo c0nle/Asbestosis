@@ -13,12 +13,12 @@ from torch.cuda.amp import GradScaler
 
 from torchvision.models import vit_b_16, ViT_B_16_Weights
 from torchvision.transforms.v2 import (
-    ColorJitter, RandomResizedCrop, RandomRotation, ToTensor, Compose, Normalize
+    ColorJitter, RandomResizedCrop, RandomRotation, ToTensor, Compose, Normalize, Resize, CenterCrop, ToImage, ToDtype
 )
 
 from torchvision.models import resnet50, ResNet50_Weights
 
-from torch.utils.data import Dataset, RandomSampler, DataLoader
+from torch.utils.data import Dataset, RandomSampler, DataLoader, SequentialSampler
 import torch.multiprocessing as mp
 from sklearn.metrics import RocCurveDisplay, roc_curve, auc
 from sklearn.preprocessing import LabelBinarizer
@@ -368,7 +368,7 @@ if __name__ == '__main__':
     nan_thresh = 999
     batch_size = 8
     learning_rate = 3e-4  # IMPORTANT for ViT
-    number_of_epochs = 10
+    number_of_epochs = 30
     fold = 0
 
     # choose which group of labels to train together
@@ -480,7 +480,8 @@ if __name__ == '__main__':
             "epochs": number_of_epochs,
             "batch_size": batch_size,
             "optimizer": str(optimizer),
-            "augmentation": str(preprocess),
+            "augmentation_train": str(train_tf),
+            "augmentation_test": str(test_tf),
             "machine": "HPC",
             "pretrained": str(ViT_B_16_Weights.DEFAULT),
             "column_group": column_group,
