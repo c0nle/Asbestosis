@@ -11,3 +11,8 @@ Asbestosis_Data/
 *.csv
 *.xlsx
 .vscode/
+logs/
+*.out
+*.err
+slurm-*.out
+slurm-*.err
