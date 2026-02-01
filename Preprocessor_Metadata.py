@@ -10,7 +10,7 @@ import pandas as pd
 import torchio as tio
 from PIL import Image
 import pydicom
-from sklearn.model_selection import StratifiedGroupKFold
+from sklearn.model_selection import StratifiedGroupKFold, StratifiedShuffleSplit
 
 
 def encode_profusions(row, first_col, second_col):
@@ -165,18 +165,23 @@ def get_label_encoding(label_df):
 
 def get_Subjects(path_root, feature_tensor):
     data = []
-    label_encoding = get_label_encoding(feature_tensor)
+    if "fileID" in feature_tensor.columns:
+        feature_by_file = feature_tensor.set_index("fileID", drop=False)
+    else:
+        feature_by_file = feature_tensor
+    label_encoding = get_label_encoding(feature_by_file)
     for root, _, files in os.walk(path_root):
         for file in files:
             if file.endswith('.zip'):
                 file_index = int(file.replace('.zip', ''))
-                if file_index in feature_tensor.index:
+                if file_index in feature_by_file.index:
                     # extract files to read them
                     output_folder = root.replace("anon", "png")
                     os.makedirs(output_folder, exist_ok=True)
-                    extract_folder = root + file.split(".zip")[0]
+                    extract_folder = os.path.join(root, file.split(".zip")[0])
                     os.makedirs(extract_folder, exist_ok=True)
-                    with zipfile.ZipFile(root + file, 'r') as xray:
+                    zip_path = os.path.join(root, file)
+                    with zipfile.ZipFile(zip_path, 'r') as xray:
                         xray.extractall(extract_folder)
 
                         dicom_files = [dicom_file for dicom_file in xray.namelist() if 'IM_' in dicom_file]
@@ -195,22 +200,23 @@ def get_Subjects(path_root, feature_tensor):
 
                                 dicom_image = Image.fromarray(pixel_array)
 
-                                out_file_path = output_folder + file.split(".zip")[0] + "-" + dicom_file.split(os.sep)[
-                                    -1] + ".png"
+                                out_file_path = os.path.join(
+                                    output_folder,
+                                    f"{file.split('.zip')[0]}-{dicom_file.split(os.sep)[-1]}.png",
+                                )
                                 dicom_image.save(out_file_path)
 
-                                label = feature_tensor[feature_tensor["fileID" == file_index]]
                                 subject = tio.Subject(
                                     image=tio.ScalarImage(out_file_path),
-                                    label=label.iloc[6:].to_dict()
+                                    label=label_encoding.loc[file_index].to_dict()
                                 )
                                 data.append(subject)
                                 print(f"Saved {out_file_path}")
                     shutil.rmtree(extract_folder)
             elif file.endswith('.png'):
                 file_index = int(file.split("-")[0])
-                if file_index in feature_tensor.index:
-                    image_path = os.path.join(root + file)
+                if file_index in feature_by_file.index:
+                    image_path = os.path.join(root, file)
 
                     subject = tio.Subject(
                         image=tio.ScalarImage(image_path),
@@ -245,44 +251,111 @@ def split_at_dash(value):
         return np.nan, np.nan
 
 
-def create_splits(metadata: pd.DataFrame, n_testfolds: int, output_folder: str,
-                  output_filename: str, training_label="mixed_shapes"):
-    """
-    Creates stratified group k-fold splits and adds Fold0..Fold{n-1} columns with 'train'/'test'.
-    - Groups by medicoID to avoid leakage
-    - Stratifies by training_label if possible
-    """
-    # Only filter if label exists
-    if training_label is not None and training_label in metadata.columns:
-        metadata = metadata[metadata[training_label] != -1]
+def _mode_or_first(values: pd.Series):
+    values = values.dropna()
+    if len(values) == 0:
+        return None
+    counts = values.value_counts()
+    if len(counts) == 0:
+        return None
+    top = counts.iloc[0]
+    modes = counts[counts == top].index.tolist()
+    return modes[0]
 
-    os.makedirs(output_folder, exist_ok=True)
+
+def _stratified_group_split(groups: np.ndarray, group_labels: np.ndarray, test_size: float, seed: int):
+    """
+    Split group IDs into train/test, approximately stratified by group-level labels.
+    Falls back to a deterministic random split if stratified split is not possible.
+    """
+    groups = np.asarray(groups)
+    group_labels = np.asarray(group_labels)
+    if len(groups) == 0:
+        return np.array([], dtype=groups.dtype), np.array([], dtype=groups.dtype)
+
+    try:
+        splitter = StratifiedShuffleSplit(n_splits=1, test_size=test_size, random_state=seed)
+        idx_train, idx_test = next(splitter.split(groups, group_labels))
+        return groups[idx_train], groups[idx_test]
+    except Exception:
+        rng = np.random.default_rng(seed)
+        perm = rng.permutation(len(groups))
+        n_test = int(round(test_size * len(groups)))
+        n_test = max(1, min(n_test, len(groups) - 1)) if len(groups) > 1 else 0
+        test_idx = perm[:n_test]
+        train_idx = perm[n_test:]
+        return groups[train_idx], groups[test_idx]
+
+
+def create_splits(
+    metadata: pd.DataFrame,
+    n_testfolds: int,
+    output_folder: str,
+    output_filename: str,
+    training_label="mixed_shapes",
+    train_frac: float = 0.5,
+    val_frac: float = 0.2,
+    test_frac: float = 0.3,
+):
+    if training_label not in metadata.columns:
+        raise ValueError(f"training_label '{training_label}' not found in metadata columns.")
+    if abs((train_frac + val_frac + test_frac) - 1.0) > 1e-6:
+        raise ValueError("train_frac + val_frac + test_frac must sum to 1.0")
+
+    metadata = metadata[metadata[training_label] != -1]
+    if not os.path.exists(output_folder):
+        os.mkdir(output_folder)
 
     for fold in range(n_testfolds):
         metadata[f'Fold{fold}'] = ''
 
-    # If training_label missing or not usable, fall back to group split without stratification
-    can_stratify = (training_label is not None and training_label in metadata.columns)
+    group_col = "medicoID" if "medicoID" in metadata.columns else None
+    if group_col is None or metadata[group_col].nunique() < n_testfolds:
+        for candidate in ["grouping", "Anforderungsnummer", "fileID", "Aufnahmenummer"]:
+            if candidate in metadata.columns and metadata[candidate].nunique() >= n_testfolds:
+                group_col = candidate
+                break
+    if group_col is None:
+        raise ValueError("No suitable grouping column found for StratifiedGroupKFold.")
 
-    if can_stratify:
-        strat = StratifiedGroupKFold(n_splits=n_testfolds, shuffle=True, random_state=0)
-        split_iter = strat.split(metadata, y=metadata[training_label], groups=metadata['medicoID'])
-    else:
-        # simple group split fallback
-        from sklearn.model_selection import GroupKFold
-        gkf = GroupKFold(n_splits=n_testfolds)
-        split_iter = gkf.split(metadata, groups=metadata['medicoID'])
+    # Build group-level labels for (approx.) stratification.
+    group_stats = (
+        metadata.groupby(group_col)[training_label]
+        .apply(_mode_or_first)
+        .reset_index()
+        .rename(columns={training_label: "group_label"})
+    )
+    group_stats = group_stats.dropna(subset=["group_label"])
+    groups = group_stats[group_col].to_numpy()
+    group_labels = group_stats["group_label"].to_numpy()
 
-    for n_fold, (train_idx, test_idx) in enumerate(split_iter):
-        train_split = metadata.iloc[train_idx]
-        test_split = metadata.iloc[test_idx]
+    if len(groups) < 3:
+        raise ValueError(f"Not enough groups for train/val/test split using '{group_col}': only {len(groups)} groups.")
 
-        test_split.to_csv(os.path.join(output_folder, f"stratified_test_set-f{n_fold}.csv"), index=False)
-        train_split.to_csv(os.path.join(output_folder, f"stratified_train_set-f{n_fold}.csv"), index=False)
+    for n_fold in range(n_testfolds):
+        trainval_groups, test_groups = _stratified_group_split(groups, group_labels, test_size=test_frac, seed=n_fold)
 
-        metadata.loc[metadata.index.isin(test_split.index), f'Fold{n_fold}'] = 'test'
-        metadata.loc[metadata.index.isin(train_split.index), f'Fold{n_fold}'] = 'train'
+        # Split remaining into train/val: val as fraction of train+val.
+        remaining_frac = max(1e-12, 1.0 - test_frac)
+        val_rel = min(0.999, max(0.001, val_frac / remaining_frac))
 
+        # Need labels for trainval groups
+        mask_tv = np.isin(groups, trainval_groups)
+        tv_groups = groups[mask_tv]
+        tv_labels = group_labels[mask_tv]
+        train_groups, val_groups = _stratified_group_split(tv_groups, tv_labels, test_size=val_rel, seed=10_000 + n_fold)
+
+        train_split = metadata[metadata[group_col].isin(train_groups)]
+        val_split = metadata[metadata[group_col].isin(val_groups)]
+        test_split = metadata[metadata[group_col].isin(test_groups)]
+
+        test_split.to_csv(os.path.join(output_folder, "stratified_test_set-f{}.csv".format(n_fold)), index=False)
+        val_split.to_csv(os.path.join(output_folder, "stratified_val_set-f{}.csv".format(n_fold)), index=False)
+        train_split.to_csv(os.path.join(output_folder, "stratified_train_set-f{}.csv".format(n_fold)), index=False)
+
+        metadata.loc[metadata[group_col].isin(test_groups), f'Fold{n_fold}'] = 'test'
+        metadata.loc[metadata[group_col].isin(val_groups), f'Fold{n_fold}'] = 'val'
+        metadata.loc[metadata[group_col].isin(train_groups), f'Fold{n_fold}'] = 'train'
     metadata.to_csv(output_filename, index=False)
     return metadata
 
@@ -339,54 +412,24 @@ def prepare_metadata(metadata_file: str, anforderungsnr_file: str, mapping_file:
     :param maximum_occurance_of_nans_per_col:
     :return:
     '''
-
-    # Step1: Read files and merge to get correct AnforderungsNummern (pseudonymized workflow)
+    # Step1: Read files and merge to get correct AnforderungsNummern
     metadata = pd.read_csv(metadata_file)
-    metadata.columns = metadata.columns.str.strip()
+    metadata['Geburtsdatum'] = pd.to_datetime(metadata['Geburtsdatum'], format='%d.%m.%Y')
+    metadata['Untersuchungsdatum'] = pd.to_datetime(metadata['Untersuchungsdatum'], format='%d.%m.%Y')
 
-    # parse Untersuchungsdatum if present
-    if "Untersuchungsdatum" in metadata.columns:
-        metadata["Untersuchungsdatum"] = pd.to_datetime(metadata["Untersuchungsdatum"], errors="coerce")
+    anford_nr = pd.read_csv(anforderungsnr_file,
+                            usecols=["Name", "Vorname", "Geburtsdatum", "Anforderungsnummer", "Untersuchungsdatum"])
+    anford_nr.rename(columns={"Name": "Nachname"}, inplace=True)
+    anford_nr['Geburtsdatum'] = pd.to_datetime(anford_nr['Geburtsdatum'], format='%m/%d/%Y')  # '%Y-%m-%d'
+    anford_nr['Untersuchungsdatum'] = pd.to_datetime(anford_nr['Untersuchungsdatum'], format='%m/%d/%Y')
 
-    #"sanity merge" with anford_nr using Anforderungsnummer + Untersuchungsdatum ---
-    if anforderungsnr_file is not None and os.path.isfile(anforderungsnr_file):
-        anford_nr = pd.read_csv(
-            anforderungsnr_file,
-            usecols=["Anforderungsnummer", "Untersuchungsdatum"]  # <- NO names, NO birthdate
-        )
-        anford_nr.columns = anford_nr.columns.str.strip()
-        anford_nr["Untersuchungsdatum"] = pd.to_datetime(anford_nr["Untersuchungsdatum"], errors="coerce")
-
-        # make sure key types match
-        if "Anforderungsnummer" in metadata.columns:
-            metadata["Anforderungsnummer"] = metadata["Anforderungsnummer"].astype(str)
-        anford_nr["Anforderungsnummer"] = anford_nr["Anforderungsnummer"].astype(str)
-
-        # inner-merge to keep only consistent entries (like before)
-        if "Anforderungsnummer" in metadata.columns and "Untersuchungsdatum" in metadata.columns:
-            metadata = metadata.merge(anford_nr, how="inner", on=["Anforderungsnummer", "Untersuchungsdatum"])
-
-    # --- Mapping merge to get fileID (same idea as old code) ---
+    metadata = metadata.merge(anford_nr, "inner", ["Nachname", "Vorname", "Geburtsdatum", "Untersuchungsdatum"])
     mapping = pd.read_csv(mapping_file)
-    mapping.columns = mapping.columns.str.strip()
+    mapping["medicoID"] = mapping["medicoID"].astype(str).apply(lambda x: x[:-4])
+    metadata["Anforderungsnummer_y"] = metadata["Anforderungsnummer_y"].astype(str)  # .apply(lambda x: x[:-2])
+    metadata = metadata.merge(mapping, "inner", left_on="Anforderungsnummer_y", right_on="medicoID")
+    metadata.rename(columns={"Anforderungsnummer_y": "Anforderungsnummer", "medicoID_x": "medicoID"}, inplace=True)
 
-    # shorten medicoID in mapping by removing last 4 characters if longer than 4
-    if "medicoID" in mapping.columns:
-        mapping["medicoID"] = mapping["medicoID"].astype(str).apply(lambda x: x[:-4] if len(x) > 4 else x)
-
-    # Use Anforderungsnummer to join mapping.medicoID 
-    if "Anforderungsnummer" in metadata.columns and "medicoID" in mapping.columns:
-        metadata["Anforderungsnummer"] = metadata["Anforderungsnummer"].astype(str)
-        metadata = metadata.merge(mapping, how="inner", left_on="Anforderungsnummer", right_on="medicoID")
-        # keep medicoID from your metadata if you want; mapping may also have medicoID
-
-    # --- ensure medicoID column exists (merges may create medicoID_x/medicoID_y) ---
-    if "medicoID" not in metadata.columns:
-        for alt in ["medicoID_x", "medicoID_y", "medicoID "]:
-            if alt in metadata.columns:
-                metadata.rename(columns={alt: "medicoID"}, inplace=True)
-                break
-                
     # Step2: replace nan entries with -1
     metadata.fillna(-1, inplace=True)
 
@@ -411,7 +454,8 @@ def prepare_metadata(metadata_file: str, anforderungsnr_file: str, mapping_file:
                        "small_rounded_opacities_profusion"]
 
     # find other columns to drop: all that have more nan entries than nan_thresh
-    nan_per_column_count = (metadata == -1).sum()
+    nan_per_column_count = [(col_name, len(metadata[metadata[col_name] != metadata[col_name]])) for col_name in
+                            metadata.columns]
     for col_name, nan_count in nan_per_column_count:
         if nan_count > maximum_occurance_of_nans_per_col:
             col_to_drop.append(col_name)
