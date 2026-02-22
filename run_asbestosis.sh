@@ -25,6 +25,14 @@ OUT_DIR="${ASBESTOSIS_OUT_DIR:-${PROJECT_DIR}/logs}"
 
 # Model/data options
 LABEL_COL="${ASBESTOSIS_LABEL:-mixed_shapes}"
+# Default to multitask if ASBESTOSIS_LABELS is unset.
+# - unset   -> multitask all labels
+# - empty   -> single-label mode (uses ASBESTOSIS_LABEL)
+# - value   -> multitask with that comma list or "all"
+# Default label set (your project’s “all labels”)
+LABELS_DEFAULT="small_rounded_right,small_rounded_left,small_rounded_size,small_irregular_right,small_irregular_left,small_irregular_size,mixed_shapes,diffuse_pleural_thickening_width,diffuse_pleural_thickening_extend,diffuse_pleural_location,localized_pleural_thickening_width,localized_pleural_thickening_extend,local_pleural_location,pleural_calcification_location,pleural_calcification_side,occupational_disease"
+LABELS="${ASBESTOSIS_LABELS-${LABELS_DEFAULT}}"
+LABEL_GROUP="${ASBESTOSIS_LABEL_GROUP-all}"
 FOLD="${ASBESTOSIS_FOLD:-0}"
 EPOCHS="${ASBESTOSIS_EPOCHS:-40}"
 BATCH_SIZE="${ASBESTOSIS_BATCH_SIZE:-24}"
@@ -49,10 +57,15 @@ BACKBONE_LR_MULT="${ASBESTOSIS_BACKBONE_LR_MULT:-0.1}"
 # Feature toggles (set to 1 to enable)
 NO_PRETRAINED="${ASBESTOSIS_NO_PRETRAINED:-0}"
 NO_WANDB="${ASBESTOSIS_NO_WANDB:-0}"
+WANDB_DETAIL="${ASBESTOSIS_WANDB_DETAIL:-compact}"
 DEDUPE_BY_FILEID="${ASBESTOSIS_DEDUPE_BY_FILEID:-0}"
 DROP_CONFLICTS="${ASBESTOSIS_DROP_CONFLICTING_FILEID_LABELS:-0}"
 CHECK_MAPPING="${ASBESTOSIS_CHECK_MAPPING:-0}"
+LABEL_STATS="${ASBESTOSIS_LABEL_STATS:-0}"
 SANITY_OVERFIT="${ASBESTOSIS_SANITY_OVERFIT:-0}"
+NO_META_FEATURES="${ASBESTOSIS_NO_METADATA_FEATURES:-0}"
+TABULAR_HIDDEN_DIM="${ASBESTOSIS_TABULAR_HIDDEN_DIM:-128}"
+TABULAR_DROPOUT="${ASBESTOSIS_TABULAR_DROPOUT:-0.1}"
 SANITY_SAMPLES="${ASBESTOSIS_SANITY_SAMPLES:-32}"
 SANITY_EPOCHS="${ASBESTOSIS_SANITY_EPOCHS:-50}"
 SANITY_LR="${ASBESTOSIS_SANITY_LR:-1e-3}"
@@ -95,6 +108,7 @@ ARGS=(
   "--fold-folder" "${FOLD_DIR}"
   "--output-folder" "${OUT_DIR}"
   "--label" "${LABEL_COL}"
+  "--label-group" "${LABEL_GROUP}"
   "--model" "${MODEL}"
   "--head-dropout" "${HEAD_DROPOUT}"
   "--fold" "${FOLD}"
@@ -106,7 +120,21 @@ ARGS=(
   "--freeze-backbone-epochs" "${FREEZE_BACKBONE_EPOCHS}"
   "--num-workers" "${NUM_WORKERS}"
   "--seed" "${SEED}"
+  "--wandb-detail" "${WANDB_DETAIL}"
 )
+
+if [[ -n "${LABELS}" ]]; then
+  ARGS+=("--labels" "${LABELS}")
+fi
+if [[ "${NO_META_FEATURES}" == "1" ]]; then
+  ARGS+=("--no-metadata-features")
+fi
+if [[ -n "${TABULAR_HIDDEN_DIM}" ]]; then
+  ARGS+=("--tabular-hidden-dim" "${TABULAR_HIDDEN_DIM}")
+fi
+if [[ -n "${TABULAR_DROPOUT}" ]]; then
+  ARGS+=("--tabular-dropout" "${TABULAR_DROPOUT}")
+fi
 
 if [[ -n "${EVAL_EVERY}" && "${EVAL_EVERY}" != "0" ]]; then
   ARGS+=("--eval-every" "${EVAL_EVERY}")
@@ -145,6 +173,9 @@ if [[ "${DROP_CONFLICTS}" == "1" ]]; then
 fi
 if [[ "${CHECK_MAPPING}" == "1" ]]; then
   ARGS+=("--check-mapping")
+fi
+if [[ "${LABEL_STATS}" == "1" ]]; then
+  ARGS+=("--label-stats")
 fi
 if [[ "${SANITY_OVERFIT}" == "1" ]]; then
   ARGS+=(

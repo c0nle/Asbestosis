@@ -6,6 +6,8 @@ import zipfile
 import glob
 import tempfile
 import random
+import functools
+import warnings
 from typing import Optional, List
 import numpy as np
 import pandas as pd
@@ -25,7 +27,9 @@ from sklearn.metrics import (
     roc_auc_score,
     accuracy_score,
     balanced_accuracy_score,
+    confusion_matrix,
     precision_recall_fscore_support,
+    precision_recall_curve,
 )
 from sklearn.preprocessing import LabelBinarizer
 from itertools import cycle
@@ -42,6 +46,123 @@ def _wandb_is_active() -> bool:
 def _wandb_log(data: dict, commit: bool = True) -> None:
     if _wandb_is_active():
         wandb.log(data, commit=commit)
+
+
+def _is_missing_label_value(value) -> bool:
+    if value is None:
+        return True
+    try:
+        if isinstance(value, float) and np.isnan(value):
+            return True
+    except Exception:
+        pass
+    if value == -1:
+        return True
+    if isinstance(value, str):
+        v = value.strip()
+        if v == "" or v.lower() in {"nan", "none"}:
+            return True
+        if v in {"-1", "-1.0"}:
+            return True
+    return False
+
+
+def _coerce_binary_label(value) -> Optional[int]:
+    """
+    Convert common binary encodings to {0,1}. Returns None if not coercible.
+    """
+    if _is_missing_label_value(value):
+        return None
+    if isinstance(value, (bool, np.bool_)):
+        return 1 if bool(value) else 0
+    if isinstance(value, (int, np.integer)):
+        if int(value) in (0, 1):
+            return int(value)
+        return None
+    if isinstance(value, (float, np.floating)):
+        if float(value).is_integer() and int(value) in (0, 1):
+            return int(value)
+        return None
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in {"0", "false", "no"}:
+            return 0
+        if v in {"1", "true", "yes"}:
+            return 1
+    return None
+
+
+def _canonical_label_value(value):
+    """
+    Canonicalize values for stable mapping keys across pandas dtype quirks.
+    """
+    if _is_missing_label_value(value):
+        return None
+    if isinstance(value, (int, np.integer)):
+        return int(value)
+    if isinstance(value, (float, np.floating)):
+        fv = float(value)
+        if np.isfinite(fv) and fv.is_integer():
+            return int(fv)
+        return fv
+    return str(value)
+
+
+def _missing_mask(series: pd.Series) -> pd.Series:
+    """
+    Treat -1, NaN, None, empty string, 'nan', 'none' as missing.
+    """
+    s = series
+    mask = s.isna()
+    try:
+        mask = mask | (s == -1)
+    except Exception:
+        pass
+    # Handle common string encodings
+    try:
+        ss = s.astype("string")
+        mask = mask | ss.str.strip().isin(["", "nan", "none", "-1", "-1.0"])
+    except Exception:
+        pass
+    return mask
+
+
+def print_label_stats(metadata: pd.DataFrame, label_cols: List[str]) -> None:
+    total = len(metadata)
+    print(f"=== Label stats (rows={total}) ===")
+    for col in label_cols:
+        if col not in metadata.columns:
+            print(f"- {col}: missing column")
+            continue
+        s = metadata[col]
+        miss = _missing_mask(s)
+        present = int((~miss).sum())
+        missing_n = int(miss.sum())
+
+        # Try binary coercion
+        vals = []
+        for v in s[~miss].tolist():
+            b = _coerce_binary_label(v)
+            if b is None:
+                vals.append(None)
+            else:
+                vals.append(int(b))
+        non_null = [v for v in vals if v is not None]
+        is_binary = len(non_null) == len(vals) and set(non_null).issubset({0, 1})
+
+        if is_binary:
+            pos = int(sum(1 for v in non_null if v == 1))
+            neg = int(sum(1 for v in non_null if v == 0))
+            print(f"- {col}: present={present} missing={missing_n} | pos={pos} neg={neg}")
+        else:
+            # Non-binary: show presence and top categories (limited).
+            try:
+                vc = s[~miss].astype("string").value_counts().head(8)
+                top = ", ".join([f"{idx}={int(cnt)}" for idx, cnt in vc.items()])
+                uniq = int(s[~miss].astype("string").nunique())
+                print(f"- {col}: present={present} missing={missing_n} | non-binary uniq={uniq} top: {top}")
+            except Exception:
+                print(f"- {col}: present={present} missing={missing_n} | non-binary")
 
 
 def _ensure_file_id(metadata: pd.DataFrame, mapping_file: str) -> pd.DataFrame:
@@ -133,12 +254,20 @@ def _zip_has_files(zip_path: str) -> bool:
         return False
 
 
+@functools.lru_cache(maxsize=200_000)
 def _find_valid_xray_path(img_dir: str, file_id: str) -> Optional[str]:
     """
     Prefer already-extracted PNG/JPG. Fall back to anon zip only if it contains files.
     """
-    candidate_roots = [img_dir]
-    candidate_roots.extend([os.path.join(img_dir, "png"), os.path.join(img_dir, "anon")])
+    # Prefer `png/` if present (common for this dataset and avoids expensive scans in the base folder).
+    png_dir = os.path.join(img_dir, "png")
+    anon_dir = os.path.join(img_dir, "anon")
+    candidate_roots = []
+    if os.path.isdir(png_dir):
+        candidate_roots.append(png_dir)
+    candidate_roots.append(img_dir)
+    if os.path.isdir(anon_dir):
+        candidate_roots.append(anon_dir)
     candidate_roots = [d for d in candidate_roots if os.path.isdir(d)]
 
     for root in candidate_roots:
@@ -222,6 +351,108 @@ class X_rayImageDataset(Dataset):
         return image, torch.tensor(label, dtype=torch.long), img_path
 
 
+class XRayMultiTaskDataset(Dataset):
+    """
+    Returns multi-task targets for multiple label columns at once.
+
+    For each task/label:
+      - `targets[label]` is either a float tensor (binary, encoded 0/1) or long tensor (multiclass index).
+      - `masks[label]` is float tensor in {0,1} indicating if the label is present for that sample.
+    """
+
+    def __init__(
+        self,
+        annotations: pd.DataFrame,
+        img_dir: str,
+        label_columns: List[str],
+        label_value_maps: dict,
+        label_output_dims: dict,
+        tabular_features: Optional[np.ndarray] = None,
+        transform=None,
+    ):
+        self.img_dir = img_dir
+        self.transform = transform
+        self.label_columns = list(label_columns)
+        self.label_value_maps = dict(label_value_maps)
+        self.label_output_dims = dict(label_output_dims)
+        self.tabular_features = None
+        if tabular_features is not None:
+            if len(tabular_features) != len(annotations):
+                raise ValueError("tabular_features must be aligned with annotations rows (same length).")
+            tabular_features = np.asarray(tabular_features, dtype=np.float32)
+        self.img_labels, self.tabular_features = self._get_available_data(annotations, tabular_features)
+
+    def _get_available_data(self, annotations: pd.DataFrame, tabular_features: Optional[np.ndarray]):
+        keep_idx = []
+        for filename in annotations["fileID"]:
+            file_id = str(int(filename))
+            valid = _find_valid_xray_path(self.img_dir, file_id)
+            if valid is not None:
+                keep_idx.append(True)
+            else:
+                keep_idx.append(False)
+        keep_idx = np.asarray(keep_idx, dtype=bool)
+        filtered = annotations.loc[keep_idx].reset_index(drop=True)
+        if tabular_features is None:
+            return filtered, None
+        return filtered, tabular_features[keep_idx]
+
+    def __len__(self):
+        return len(self.img_labels)
+
+    def __getitem__(self, idx):
+        row = self.img_labels.iloc[idx]
+        file_id = str(int(row["fileID"]))
+        img_path = _find_valid_xray_path(self.img_dir, file_id)
+        if img_path is None:
+            raise FileNotFoundError(f"No valid image found for fileID={file_id} under {self.img_dir}")
+
+        image = _read_xray_image(img_path)
+        if self.transform:
+            image = self.transform(image)
+
+        tabular = None
+        if self.tabular_features is not None:
+            tabular = torch.tensor(self.tabular_features[idx], dtype=torch.float32)
+
+        targets = {}
+        masks = {}
+        for col in self.label_columns:
+            raw = row.get(col)
+            missing = _is_missing_label_value(raw)
+
+            if missing:
+                masks[col] = torch.tensor(0.0, dtype=torch.float32)
+                # placeholder target (ignored via mask)
+                if self.label_output_dims[col] == 1:
+                    targets[col] = torch.tensor(0.0, dtype=torch.float32)
+                else:
+                    targets[col] = torch.tensor(0, dtype=torch.long)
+                continue
+
+            masks[col] = torch.tensor(1.0, dtype=torch.float32)
+            if self.label_output_dims[col] == 1:
+                b = _coerce_binary_label(raw)
+                if b is None:
+                    # Value is not coercible -> ignore sample for this task.
+                    masks[col] = torch.tensor(0.0, dtype=torch.float32)
+                    targets[col] = torch.tensor(0.0, dtype=torch.float32)
+                else:
+                    targets[col] = torch.tensor(float(b), dtype=torch.float32)
+            else:
+                mapping = self.label_value_maps[col]
+                key = _canonical_label_value(raw)
+                if key is None or key not in mapping:
+                    masks[col] = torch.tensor(0.0, dtype=torch.float32)
+                    targets[col] = torch.tensor(0, dtype=torch.long)
+                else:
+                    targets[col] = torch.tensor(int(mapping[key]), dtype=torch.long)
+
+        if tabular is None:
+            return image, targets, masks, img_path
+        return image, tabular, targets, masks, img_path
+
+
 def run_epoch(model, optimizer, lr_scheduler, criterion, scaler, data_loader, device, train=True, show_figs=True, max_steps=None):
     if train:
         model.train()
@@ -234,13 +465,28 @@ def run_epoch(model, optimizer, lr_scheduler, criterion, scaler, data_loader, de
     n_steps = 0
     y_true_batches = []
     y_prob_batches = []
+    y_mask_batches = []
+    is_multitask = getattr(model, "is_multitask", False)
+    y_true_by_task = {}
+    y_prob_by_task = {}
+    y_mask_by_task = {}
 
     autocast_enabled = device == "cuda"
     autocast_dtype = torch.float16 if device == "cuda" else torch.bfloat16
 
-    for step, (data, ground_truth, path) in enumerate(data_loader):
+    for step, batch in enumerate(data_loader):
         if max_steps is not None and step >= max_steps:
             break
+        if len(batch) == 3:
+            data, ground_truth, path = batch
+            targets = None
+            masks = None
+            tabular = None
+        elif len(batch) == 4:
+            data, targets, masks, path = batch
+            tabular = None
+        else:
+            data, tabular, targets, masks, path = batch
         if step % 100 == 0:
             gc.collect()
             if show_figs:
@@ -250,17 +496,43 @@ def run_epoch(model, optimizer, lr_scheduler, criterion, scaler, data_loader, de
                 plt.close()
 
         data = data.to(device)
-        ground_truth = ground_truth.to(device)
+        if tabular is not None:
+            tabular = tabular.to(device)
+        if targets is None:
+            ground_truth = ground_truth.to(device)
+        else:
+            targets = {k: v.to(device) for k, v in targets.items()}
+            masks = {k: v.to(device) for k, v in masks.items()}
         if train:
             optimizer.zero_grad(set_to_none=True)
 
         with torch.autocast(device_type=device, dtype=autocast_dtype, enabled=autocast_enabled):
-            logits = model(data)
-            if isinstance(criterion, nn.BCEWithLogitsLoss):
-                target = ground_truth.float().view(-1, 1)
-                loss = criterion(logits, target)
+            logits = model(data) if tabular is None else model(data, tabular)
+            if targets is None:
+                if isinstance(criterion, nn.BCEWithLogitsLoss):
+                    target = ground_truth.float().view(-1, 1)
+                    loss = criterion(logits, target)
+                else:
+                    loss = criterion(logits, ground_truth)
             else:
-                loss = criterion(logits, ground_truth)
+                # Multi-task: criterion is a dict {task: (loss_fn, output_dim)}.
+                losses = []
+                for task, (loss_fn, output_dim) in criterion.items():
+                    task_logits = logits[task]
+                    task_mask = masks[task].view(-1)
+                    if output_dim == 1:
+                        task_target = targets[task].float().view(-1)
+                        per = loss_fn(task_logits.view(-1), task_target)
+                        per = per * task_mask
+                        denom = task_mask.sum().clamp(min=1.0)
+                        losses.append(per.sum() / denom)
+                    else:
+                        task_target = targets[task].long().view(-1)
+                        per = loss_fn(task_logits, task_target)
+                        per = per * task_mask
+                        denom = task_mask.sum().clamp(min=1.0)
+                        losses.append(per.sum() / denom)
+                loss = torch.stack(losses).mean() if losses else torch.tensor(0.0, device=device)
 
         if train:
             if scaler.is_enabled():
@@ -274,12 +546,26 @@ def run_epoch(model, optimizer, lr_scheduler, criterion, scaler, data_loader, de
                 lr_scheduler.step()
 
         with torch.no_grad():
-            if isinstance(criterion, nn.BCEWithLogitsLoss):
-                probs = torch.sigmoid(logits).view(-1)
+            if targets is None:
+                if isinstance(criterion, nn.BCEWithLogitsLoss):
+                    probs = torch.sigmoid(logits).view(-1)
+                else:
+                    probs = torch.softmax(logits, dim=1)
+                y_true_batches.append(ground_truth.detach().cpu())
+                y_prob_batches.append(probs.detach().cpu())
             else:
-                probs = torch.softmax(logits, dim=1)
-            y_true_batches.append(ground_truth.detach().cpu())
-            y_prob_batches.append(probs.detach().cpu())
+                for task, (_, output_dim) in criterion.items():
+                    task_logits = logits[task]
+                    if output_dim == 1:
+                        probs = torch.sigmoid(task_logits).view(-1)
+                        y_true_by_task.setdefault(task, []).append(targets[task].detach().cpu().view(-1))
+                        y_prob_by_task.setdefault(task, []).append(probs.detach().cpu().view(-1))
+                        y_mask_by_task.setdefault(task, []).append(masks[task].detach().cpu().view(-1))
+                    else:
+                        probs = torch.softmax(task_logits, dim=1)
+                        y_true_by_task.setdefault(task, []).append(targets[task].detach().cpu().view(-1))
+                        y_prob_by_task.setdefault(task, []).append(probs.detach().cpu())
+                        y_mask_by_task.setdefault(task, []).append(masks[task].detach().cpu().view(-1))
 
         _wandb_log({f"loss/{suffix}": float(loss.item())}, commit=False)
         epoch_loss += float(loss.item())
@@ -289,9 +575,139 @@ def run_epoch(model, optimizer, lr_scheduler, criterion, scaler, data_loader, de
     avg_epoch_loss = epoch_loss / max(1, n_steps)
     _wandb_log({f"average_loss/{suffix}": avg_epoch_loss})
     print(f"{suffix}: \tAverage Loss: {avg_epoch_loss:.6f}")
+    if is_multitask:
+        results = {}
+        for task in y_true_by_task.keys():
+            if not y_true_by_task[task]:
+                continue
+            results[task] = {
+                "y_true": torch.cat(y_true_by_task[task], dim=0),
+                "y_prob": torch.cat(y_prob_by_task[task], dim=0),
+                "y_mask": torch.cat(y_mask_by_task[task], dim=0),
+            }
+        return results, avg_epoch_loss
     if not y_true_batches or not y_prob_batches:
         return torch.empty(0), torch.empty(0), float("nan")
     return torch.cat(y_true_batches, dim=0), torch.cat(y_prob_batches, dim=0), avg_epoch_loss
+
+
+class MultiTaskModel(nn.Module):
+    def __init__(
+        self,
+        backbone: nn.Module,
+        head_in_features: int,
+        task_output_dims: dict,
+        head_dropout: float,
+        tabular_in_dim: int = 0,
+        tabular_hidden_dim: int = 128,
+        tabular_dropout: float = 0.1,
+    ):
+        super().__init__()
+        self.backbone = backbone
+        self.task_output_dims = dict(task_output_dims)
+        self.task_names = list(task_output_dims.keys())
+        self.is_multitask = True
+
+        self.tabular_in_dim = int(tabular_in_dim or 0)
+        self.tabular_hidden_dim = int(tabular_hidden_dim)
+        self.tabular = None
+        fusion_in_features = int(head_in_features)
+        if self.tabular_in_dim > 0:
+            self.tabular = nn.Sequential(
+                nn.Linear(self.tabular_in_dim, self.tabular_hidden_dim),
+                nn.ReLU(),
+                nn.Dropout(p=float(tabular_dropout)),
+                nn.Linear(self.tabular_hidden_dim, self.tabular_hidden_dim),
+                nn.ReLU(),
+            )
+            fusion_in_features = fusion_in_features + self.tabular_hidden_dim
+
+        heads = {}
+        for name, out_dim in self.task_output_dims.items():
+            if head_dropout and head_dropout > 0:
+                heads[name] = nn.Sequential(nn.Dropout(p=head_dropout), nn.Linear(fusion_in_features, out_dim))
+            else:
+                heads[name] = nn.Linear(fusion_in_features, out_dim)
+        self.heads = nn.ModuleDict(heads)
+
+    def forward(self, x, tabular: Optional[torch.Tensor] = None):
+        feats = self.backbone(x)
+        if self.tabular is not None:
+            if tabular is None:
+                raise ValueError("MultiTaskModel was built with tabular features but none were provided.")
+            tab = self.tabular(tabular)
+            feats = torch.cat([feats, tab], dim=1)
+        return {name: head(feats) for name, head in self.heads.items()}
+
+
+def _build_multitask_model(
+    model_name: str,
+    task_output_dims: dict,
+    no_pretrained: bool,
+    head_dropout: float,
+    tabular_in_dim: int = 0,
+    tabular_hidden_dim: int = 128,
+    tabular_dropout: float = 0.1,
+) -> MultiTaskModel:
+    if model_name == "resnet50":
+        weights = None if no_pretrained else ResNet50_Weights.DEFAULT
+        try:
+            base = resnet50(weights=weights)
+        except Exception as e:
+            print(f"Warning: failed to load pretrained weights ({e}); falling back to random init.")
+            base = resnet50(weights=None)
+
+        base.conv1 = torch.nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+        in_features = base.fc.in_features
+        base.fc = nn.Identity()
+        return MultiTaskModel(
+            base,
+            head_in_features=in_features,
+            task_output_dims=task_output_dims,
+            head_dropout=head_dropout,
+            tabular_in_dim=tabular_in_dim,
+            tabular_hidden_dim=tabular_hidden_dim,
+            tabular_dropout=tabular_dropout,
+        )
+
+    if model_name == "vit_b_16":
+        weights = None if no_pretrained else ViT_B_16_Weights.DEFAULT
+        try:
+            base = vit_b_16(weights=weights)
+        except Exception as e:
+            print(f"Warning: failed to load pretrained weights ({e}); falling back to random init.")
+            base = vit_b_16(weights=None)
+
+        old = base.conv_proj
+        new = torch.nn.Conv2d(
+            1,
+            old.out_channels,
+            kernel_size=old.kernel_size,
+            stride=old.stride,
+            padding=old.padding,
+            bias=(old.bias is not None),
+        )
+        with torch.no_grad():
+            if old.weight.shape[1] == 3:
+                new.weight.copy_(old.weight.mean(dim=1, keepdim=True))
+            else:
+                new.weight.copy_(old.weight)
+            if old.bias is not None and new.bias is not None:
+                new.bias.copy_(old.bias)
+        base.conv_proj = new
+        head_in_features = base.hidden_dim
+        base.heads = nn.Identity()
+        return MultiTaskModel(
+            base,
+            head_in_features=head_in_features,
+            task_output_dims=task_output_dims,
+            head_dropout=head_dropout,
+            tabular_in_dim=tabular_in_dim,
+            tabular_hidden_dim=tabular_hidden_dim,
+            tabular_dropout=tabular_dropout,
+        )
+
+    raise ValueError(f"Unsupported model: {model_name}")
 
 
 def _set_seed(seed: int) -> None:
@@ -337,6 +753,10 @@ def _accuracy_from_logits(logits: torch.Tensor, targets: torch.Tensor) -> float:
 def _freeze_backbone(model: nn.Module, model_name: str) -> None:
     for p in model.parameters():
         p.requires_grad = False
+    if getattr(model, "is_multitask", False):
+        for p in model.heads.parameters():
+            p.requires_grad = True
+        return
     if model_name == "resnet50":
         for p in model.fc.parameters():
             p.requires_grad = True
@@ -353,7 +773,9 @@ def _unfreeze_all(model: nn.Module) -> None:
 
 
 def _split_head_backbone_params(model: nn.Module, model_name: str):
-    if model_name == "resnet50":
+    if getattr(model, "is_multitask", False):
+        head_module = model.heads
+    elif model_name == "resnet50":
         head_module = model.fc
     elif model_name == "vit_b_16":
         head_module = model.heads
@@ -548,11 +970,19 @@ def log_classification_metrics(
         y_pred_np = y_prob_np.argmax(axis=1)
         pos_rate = float((y_true_np == 1).mean()) if y_prob_np.shape[1] == 2 else float("nan")
 
+    unique_true = np.unique(y_true_np) if y_true_np.size else np.array([])
+    bal_acc_val = float("nan")
+    try:
+        if unique_true.size >= 2:
+            bal_acc_val = float(balanced_accuracy_score(y_true_np, y_pred_np))
+    except Exception:
+        pass
+
     metrics = {
         f"epoch/{suffix}": epoch,
         f"average_loss/{suffix}": float(avg_loss),
         f"accuracy/{suffix}": float(accuracy_score(y_true_np, y_pred_np)),
-        f"balanced_accuracy/{suffix}": float(balanced_accuracy_score(y_true_np, y_pred_np)),
+        f"balanced_accuracy/{suffix}": bal_acc_val,
         f"pos_rate/{suffix}": pos_rate,
         f"pred_pos_rate@0.5/{suffix}": float((y_pred_np == 1).mean()) if np.isfinite(pos_rate) else float("nan"),
     }
@@ -571,7 +1001,7 @@ def log_classification_metrics(
             {
                 f"fixed_threshold/{suffix}": float(fixed_threshold),
                 f"accuracy@fixed_thr/{suffix}": float(accuracy_score(y_true_np, y_pred_fixed)),
-                f"balanced_accuracy@fixed_thr/{suffix}": float(balanced_accuracy_score(y_true_np, y_pred_fixed)),
+                f"balanced_accuracy@fixed_thr/{suffix}": float(balanced_accuracy_score(y_true_np, y_pred_fixed)) if unique_true.size >= 2 else float("nan"),
                 f"precision@fixed_thr/{suffix}": float(precision_fx),
                 f"recall@fixed_thr/{suffix}": float(recall_fx),
                 f"f1@fixed_thr/{suffix}": float(f1_fx),
@@ -605,6 +1035,27 @@ def log_classification_metrics(
     except Exception:
         pass
 
+    # Confusion matrix (numeric + optional wandb plot)
+    try:
+        if is_binary_scores or (y_prob_np.ndim == 2 and y_prob_np.shape[1] == 2):
+            cm = confusion_matrix(y_true_np.astype(int), y_pred_np.astype(int), labels=[0, 1])
+            tn, fp, fn, tp = cm.ravel().tolist()
+            metrics.update(
+                {
+                    f"cm/tn/{suffix}": int(tn),
+                    f"cm/fp/{suffix}": int(fp),
+                    f"cm/fn/{suffix}": int(fn),
+                    f"cm/tp/{suffix}": int(tp),
+                }
+            )
+        else:
+            labels = np.arange(int(y_prob_np.shape[1]))
+            cm = confusion_matrix(y_true_np.astype(int), y_pred_np.astype(int), labels=labels)
+            # Log the diagonal sum as a sanity metric (equal to accuracy * n) without shipping a big matrix.
+            metrics[f"cm/diag_sum/{suffix}"] = int(np.trace(cm))
+    except Exception:
+        cm = None
+
     # Score histogram + best threshold (binary only)
     if is_binary_scores or (y_prob_np.ndim == 2 and y_prob_np.shape[1] == 2):
         score_vec = scores if scores is not None else y_prob_np[:, 1]
@@ -625,7 +1076,7 @@ def log_classification_metrics(
                     f"tpr_at_best/{suffix}": float(tpr[best_idx]),
                     f"fpr_at_best/{suffix}": float(fpr[best_idx]),
                     f"accuracy@best_thr/{suffix}": float(accuracy_score(y_true_np, y_pred_best)),
-                    f"balanced_accuracy@best_thr/{suffix}": float(balanced_accuracy_score(y_true_np, y_pred_best)),
+                    f"balanced_accuracy@best_thr/{suffix}": float(balanced_accuracy_score(y_true_np, y_pred_best)) if unique_true.size >= 2 else float("nan"),
                     f"precision@best_thr/{suffix}": float(precision_b),
                     f"recall@best_thr/{suffix}": float(recall_b),
                     f"f1@best_thr/{suffix}": float(f1_b),
@@ -683,16 +1134,20 @@ def log_classification_metrics(
         + (f" f1@bestF1={metrics.get(f'f1@best_f1_thr/{suffix}', float('nan')):.3f}" if f"f1@best_f1_thr/{suffix}" in metrics else "")
     )
 
-    # Confusion matrix (wandb only)
+    # Confusion matrix (wandb plot)
     if _wandb_is_active():
         try:
+            if is_binary_scores:
+                class_names = ["0", "1"]
+            else:
+                class_names = [str(i) for i in range(int(y_prob_np.shape[1]))]
             wandb.log(
                 {
                     f"confusion_matrix/{suffix}": wandb.plot.confusion_matrix(
                         probs=None,
                         y_true=y_true_np,
                         preds=y_pred_np,
-                        class_names=[str(i) for i in range(y_prob_np.shape[1])],
+                        class_names=class_names,
                     )
                 }
             )
@@ -700,6 +1155,319 @@ def log_classification_metrics(
             pass
 
     return metrics
+
+
+def log_multitask_metrics(
+    results_by_task: dict,
+    avg_loss: float,
+    suffix: str,
+    epoch: int,
+    task_output_dims: dict,
+    task_index_to_label: dict,
+    fixed_thresholds: Optional[dict] = None,
+    compute_thresholds: bool = False,
+    wandb_detail: str = "compact",
+) -> dict:
+    metrics_all: dict = {
+        f"epoch/{suffix}": epoch,
+        f"average_loss/{suffix}": float(avg_loss),
+    }
+
+    per_task_f1 = []
+    per_task_auc = []
+    per_task_acc = []
+
+    def _should_log_task_metrics() -> bool:
+        if wandb_detail == "full":
+            return True
+        # compact: only for eval + final/best outputs (avoid 16x charts for train)
+        return suffix in {"eval", "final_test", "best_test"}
+
+    for task, data in results_by_task.items():
+        y_true = data["y_true"].detach().cpu().numpy()
+        y_prob = data["y_prob"].detach().cpu().numpy()
+        y_mask = data["y_mask"].detach().cpu().numpy().astype(bool)
+        out_dim = int(task_output_dims[task])
+
+        if y_true.size == 0 or y_mask.sum() == 0:
+            continue
+
+        y_true = y_true[y_mask]
+        unique_true = np.unique(y_true) if y_true.size else np.array([])
+        if out_dim == 1:
+            scores = y_prob.reshape(-1)[y_mask]
+            y_pred = (scores >= 0.5).astype(int)
+
+            acc = float(accuracy_score(y_true, y_pred))
+            if unique_true.size >= 2:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    bal_acc = float(balanced_accuracy_score(y_true, y_pred))
+            else:
+                bal_acc = float("nan")
+            precision, recall, f1, _ = precision_recall_fscore_support(
+                y_true,
+                y_pred,
+                average="binary",
+                zero_division=0,
+            )
+            task_metrics = {}
+            if _should_log_task_metrics() or wandb_detail == "full":
+                if wandb_detail == "full":
+                    task_metrics.update(
+                        {
+                            f"task/{task}/accuracy/{suffix}": acc,
+                            f"task/{task}/balanced_accuracy/{suffix}": bal_acc,
+                            f"task/{task}/precision/{suffix}": float(precision),
+                            f"task/{task}/recall/{suffix}": float(recall),
+                            f"task/{task}/f1/{suffix}": float(f1),
+                            f"task/{task}/pos_rate/{suffix}": float((y_true == 1).mean()),
+                            f"task/{task}/pred_pos_rate@0.5/{suffix}": float((y_pred == 1).mean()),
+                        }
+                    )
+                else:
+                    # compact
+                    task_metrics.update(
+                        {
+                            f"task/{task}/balanced_accuracy/{suffix}": bal_acc,
+                            f"task/{task}/f1/{suffix}": float(f1),
+                            f"task/{task}/recall/{suffix}": float(recall),
+                        }
+                    )
+            try:
+                if len(np.unique(y_true)) > 1:
+                    task_metrics[f"task/{task}/auc/{suffix}"] = float(roc_auc_score(y_true, scores))
+            except Exception:
+                pass
+
+            try:
+                cm = confusion_matrix(y_true.astype(int), y_pred.astype(int), labels=[0, 1])
+                tn, fp, fn, tp = cm.ravel().tolist()
+                if wandb_detail == "full":
+                    task_metrics.update(
+                        {
+                            f"task/{task}/cm/tn/{suffix}": int(tn),
+                            f"task/{task}/cm/fp/{suffix}": int(fp),
+                            f"task/{task}/cm/fn/{suffix}": int(fn),
+                            f"task/{task}/cm/tp/{suffix}": int(tp),
+                        }
+                    )
+            except Exception:
+                pass
+
+            # Optional fixed threshold (e.g. from val).
+            if fixed_thresholds and task in fixed_thresholds and fixed_thresholds[task] is not None:
+                thr = float(fixed_thresholds[task])
+                y_pred_fx = (scores >= thr).astype(int)
+                p_fx, r_fx, f1_fx, _ = precision_recall_fscore_support(
+                    y_true,
+                    y_pred_fx,
+                    average="binary",
+                    zero_division=0,
+                )
+                if wandb_detail == "full":
+                    task_metrics.update(
+                        {
+                            f"task/{task}/fixed_threshold/{suffix}": thr,
+                            f"task/{task}/f1@fixed_thr/{suffix}": float(f1_fx),
+                            f"task/{task}/precision@fixed_thr/{suffix}": float(p_fx),
+                            f"task/{task}/recall@fixed_thr/{suffix}": float(r_fx),
+                        }
+                    )
+                else:
+                    task_metrics.update(
+                        {
+                            f"task/{task}/fixed_threshold/{suffix}": thr,
+                            f"task/{task}/f1@fixed_thr/{suffix}": float(f1_fx),
+                        }
+                    )
+
+            # Optional threshold search on this split (for logging / selecting on eval).
+            if compute_thresholds and unique_true.size > 1:
+                try:
+                    fpr, tpr, thresholds = roc_curve(y_true, scores)
+                    best_idx = int(np.argmax(tpr - fpr))
+                    best_thr_youden = float(thresholds[best_idx])
+                    task_metrics[f"task/{task}/best_threshold_youden/{suffix}"] = best_thr_youden
+                except Exception:
+                    pass
+                try:
+                    pr_prec, pr_rec, pr_thr = precision_recall_curve(y_true, scores)
+                    if pr_thr.size > 0:
+                        pr_f1 = (2 * pr_prec[:-1] * pr_rec[:-1]) / (pr_prec[:-1] + pr_rec[:-1] + 1e-12)
+                        best_f1_idx = int(np.nanargmax(pr_f1))
+                        best_thr_f1 = float(pr_thr[best_f1_idx])
+                        task_metrics[f"task/{task}/best_threshold_f1/{suffix}"] = best_thr_f1
+                except Exception:
+                    pass
+
+            metrics_all.update(task_metrics)
+            per_task_acc.append(acc)
+            per_task_f1.append(float(f1))
+            auc_val = task_metrics.get(f"task/{task}/auc/{suffix}")
+            if auc_val is not None:
+                per_task_auc.append(float(auc_val))
+
+            if wandb_detail == "full":
+                print(
+                    f"{suffix}/{task}: "
+                    f"acc={acc:.3f} bal_acc={bal_acc:.3f} "
+                    f"prec={float(precision):.3f} rec={float(recall):.3f} f1={float(f1):.3f}"
+                    + (f" auc={float(auc_val):.3f}" if auc_val is not None else "")
+                )
+
+                if _wandb_is_active() and suffix in {"final_test", "best_test"}:
+                    try:
+                        wandb.log(
+                            {
+                                f"confusion_matrix/{suffix}/{task}": wandb.plot.confusion_matrix(
+                                    probs=None,
+                                    y_true=y_true.astype(int),
+                                    preds=y_pred.astype(int),
+                                    class_names=["0", "1"],
+                                )
+                            },
+                            commit=False,
+                        )
+                    except Exception:
+                        pass
+            continue
+
+        # Multiclass task
+        probs = y_prob[y_mask]
+        y_pred = probs.argmax(axis=1)
+        acc = float(accuracy_score(y_true, y_pred))
+        if unique_true.size >= 2:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                bal_acc = float(balanced_accuracy_score(y_true, y_pred))
+        else:
+            bal_acc = float("nan")
+        precision, recall, f1, _ = precision_recall_fscore_support(
+            y_true,
+            y_pred,
+            average="macro",
+            zero_division=0,
+        )
+        task_metrics = {}
+        if _should_log_task_metrics() or wandb_detail == "full":
+            if wandb_detail == "full":
+                task_metrics.update(
+                    {
+                        f"task/{task}/accuracy/{suffix}": acc,
+                        f"task/{task}/balanced_accuracy/{suffix}": bal_acc,
+                        f"task/{task}/precision_macro/{suffix}": float(precision),
+                        f"task/{task}/recall_macro/{suffix}": float(recall),
+                        f"task/{task}/f1_macro/{suffix}": float(f1),
+                    }
+                )
+            else:
+                task_metrics.update(
+                    {
+                        f"task/{task}/balanced_accuracy/{suffix}": bal_acc,
+                        f"task/{task}/f1_macro/{suffix}": float(f1),
+                        f"task/{task}/recall_macro/{suffix}": float(recall),
+                    }
+                )
+
+        try:
+            if unique_true.size > 1:
+                task_metrics[f"task/{task}/auc_macro_ovr/{suffix}"] = float(
+                    roc_auc_score(y_true, probs, multi_class="ovr", average="macro")
+                )
+        except Exception:
+            pass
+
+        try:
+            cm = confusion_matrix(y_true.astype(int), y_pred.astype(int), labels=np.arange(out_dim))
+            if wandb_detail == "full":
+                task_metrics[f"task/{task}/cm/diag_sum/{suffix}"] = int(np.trace(cm))
+        except Exception:
+            pass
+
+        metrics_all.update(task_metrics)
+        per_task_acc.append(acc)
+        per_task_f1.append(float(f1))
+        auc_val = task_metrics.get(f"task/{task}/auc_macro_ovr/{suffix}")
+        if auc_val is not None:
+            per_task_auc.append(float(auc_val))
+
+        if wandb_detail == "full":
+            print(
+                f"{suffix}/{task}: "
+                f"acc={acc:.3f} bal_acc={bal_acc:.3f} "
+                f"prec_macro={float(precision):.3f} rec_macro={float(recall):.3f} f1_macro={float(f1):.3f}"
+                + (f" auc_macro_ovr={float(auc_val):.3f}" if auc_val is not None else "")
+            )
+
+            if _wandb_is_active() and suffix in {"final_test", "best_test"}:
+                try:
+                    class_names = task_index_to_label.get(task) or [str(i) for i in range(out_dim)]
+                    wandb.log(
+                        {
+                            f"confusion_matrix/{suffix}/{task}": wandb.plot.confusion_matrix(
+                                probs=None,
+                                y_true=y_true.astype(int),
+                                preds=y_pred.astype(int),
+                                class_names=[str(x) for x in class_names],
+                            )
+                        },
+                        commit=False,
+                    )
+                except Exception:
+                    pass
+
+    if per_task_acc:
+        metrics_all[f"macro_accuracy/{suffix}"] = float(np.mean(per_task_acc))
+    if per_task_f1:
+        metrics_all[f"macro_f1/{suffix}"] = float(np.mean(per_task_f1))
+    if per_task_auc:
+        metrics_all[f"macro_auc/{suffix}"] = float(np.mean(per_task_auc))
+
+    # Reduce wandb clutter in compact mode: always log macro metrics, and only selected task metrics.
+    metrics_log = {
+        f"epoch/{suffix}": metrics_all[f"epoch/{suffix}"],
+        f"average_loss/{suffix}": metrics_all[f"average_loss/{suffix}"],
+    }
+    for k in (f"macro_accuracy/{suffix}", f"macro_f1/{suffix}", f"macro_auc/{suffix}"):
+        if k in metrics_all:
+            metrics_log[k] = metrics_all[k]
+
+    if _should_log_task_metrics():
+        for k, v in metrics_all.items():
+            if not k.startswith("task/"):
+                continue
+            # compact: only log f1/f1_macro + auc* + balanced_accuracy + fixed_threshold + f1@fixed_thr
+            if wandb_detail == "full":
+                metrics_log[k] = v
+                continue
+            if any(
+                token in k
+                for token in (
+                    f"/balanced_accuracy/{suffix}",
+                    f"/f1/{suffix}",
+                    f"/recall/{suffix}",
+                    f"/f1_macro/{suffix}",
+                    f"/recall_macro/{suffix}",
+                    f"/auc/{suffix}",
+                    f"/auc_macro_ovr/{suffix}",
+                    f"/fixed_threshold/{suffix}",
+                    f"/f1@fixed_thr/{suffix}",
+                    f"/best_threshold_f1/{suffix}",
+                )
+            ):
+                metrics_log[k] = v
+
+    _wandb_log(metrics_log)
+    print(
+        f"{suffix} macro: "
+        f"loss={metrics_all.get(f'average_loss/{suffix}', float('nan')):.4f} "
+        f"macro_acc={metrics_all.get(f'macro_accuracy/{suffix}', float('nan')):.3f} "
+        f"macro_f1={metrics_all.get(f'macro_f1/{suffix}', float('nan')):.3f} "
+        f"macro_auc={metrics_all.get(f'macro_auc/{suffix}', float('nan')):.3f}"
+    )
+
+    return metrics_all
 
 
 def check_mapping_merge(
@@ -772,14 +1540,18 @@ def check_mapping_merge(
         print(f"Missing files in first {head_n} matched rows: {miss}/{head_n}")
 
 
-def _dedupe_by_file_id(metadata: pd.DataFrame, label_col: str, drop_conflicts: bool = True) -> pd.DataFrame:
+def _dedupe_by_file_id(metadata: pd.DataFrame, label_col, drop_conflicts: bool = True) -> pd.DataFrame:
     """
     Make training/eval rows 1:1 with images by collapsing duplicate `fileID` rows.
     For the label column, uses the mode (most frequent value). If there's a tie / conflict and
     `drop_conflicts=True`, the entire fileID group is dropped.
     Other columns keep the first row (they should be identical for duplicates anyway).
     """
-    if "fileID" not in metadata.columns or label_col not in metadata.columns:
+    if "fileID" not in metadata.columns:
+        return metadata
+    label_cols = [label_col] if isinstance(label_col, str) else list(label_col)
+    label_cols = [c for c in label_cols if c in metadata.columns]
+    if not label_cols:
         return metadata
 
     grouped = metadata.groupby("fileID", dropna=False)
@@ -787,18 +1559,21 @@ def _dedupe_by_file_id(metadata: pd.DataFrame, label_col: str, drop_conflicts: b
     dropped = 0
 
     for _, group in grouped:
-        counts = group[label_col].value_counts(dropna=False)
-        if len(counts) == 0:
-            continue
-        top = counts.iloc[0]
-        modes = counts[counts == top].index.tolist()
-
-        if drop_conflicts and len(modes) > 1:
+        row = group.iloc[0].copy()
+        conflict = False
+        for col in label_cols:
+            counts = group[col].value_counts(dropna=False)
+            if len(counts) == 0:
+                continue
+            top = counts.iloc[0]
+            modes = counts[counts == top].index.tolist()
+            if drop_conflicts and len(modes) > 1:
+                conflict = True
+                break
+            row[col] = modes[0]
+        if conflict:
             dropped += 1
             continue
-
-        row = group.iloc[0].copy()
-        row[label_col] = modes[0]
         rows.append(row)
 
     result = pd.DataFrame(rows).reset_index(drop=True)
@@ -900,6 +1675,55 @@ def compute_roc_curve(y_true, y_scores, plot=False, title_suffix=''):
     return {"fpr": fpr, "tpr": tpr, "thresholds": thresholds, "best_index_val": best_index, "roc_auc_val": roc_auc}
 
 
+def _prepare_tabular_matrices(
+    train_df: pd.DataFrame,
+    val_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    feature_cols: List[str],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, List[str]]:
+    """
+    Basic tabular preprocessing:
+    - numeric columns: fill with train median
+    - categorical columns: fill with "missing" and one-hot encode (train vocabulary), then align val/test
+    """
+    if not feature_cols:
+        empty = np.zeros((len(train_df), 0), dtype=np.float32)
+        return empty, np.zeros((len(val_df), 0), dtype=np.float32), np.zeros((len(test_df), 0), dtype=np.float32), []
+
+    train_x = train_df[feature_cols].copy()
+    val_x = val_df[feature_cols].copy()
+    test_x = test_df[feature_cols].copy()
+
+    numeric_cols = [c for c in feature_cols if pd.api.types.is_numeric_dtype(train_x[c])]
+    cat_cols = [c for c in feature_cols if c not in numeric_cols]
+
+    for c in numeric_cols:
+        med = train_x[c].median()
+        train_x[c] = train_x[c].fillna(med)
+        val_x[c] = val_x[c].fillna(med)
+        test_x[c] = test_x[c].fillna(med)
+
+    for c in cat_cols:
+        train_x[c] = train_x[c].astype("string").fillna("missing")
+        val_x[c] = val_x[c].astype("string").fillna("missing")
+        test_x[c] = test_x[c].astype("string").fillna("missing")
+
+    train_enc = pd.get_dummies(train_x, columns=cat_cols, dummy_na=False)
+    val_enc = pd.get_dummies(val_x, columns=cat_cols, dummy_na=False)
+    test_enc = pd.get_dummies(test_x, columns=cat_cols, dummy_na=False)
+
+    val_enc = val_enc.reindex(columns=train_enc.columns, fill_value=0)
+    test_enc = test_enc.reindex(columns=train_enc.columns, fill_value=0)
+
+    feature_names = train_enc.columns.tolist()
+    return (
+        train_enc.to_numpy(dtype=np.float32),
+        val_enc.to_numpy(dtype=np.float32),
+        test_enc.to_numpy(dtype=np.float32),
+        feature_names,
+    )
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -914,6 +1738,24 @@ if __name__ == '__main__':
     )
     parser.add_argument("--fold", type=int, default=0)
     parser.add_argument("--label", default="mixed_shapes")
+    parser.add_argument(
+        "--labels",
+        default=None,
+        help="Multi-task mode: comma-separated label columns, or 'all' to train on all label columns (excluding general metadata columns).",
+    )
+    parser.add_argument(
+        "--label-group",
+        default="mixed",
+        choices=["mixed", "rounded", "irregular", "large", "pleural", "occupational", "symbol", "general", "all"],
+        help="Which metadata column group to load (used for feature/metadata passthrough; labels are controlled via --label or --labels).",
+    )
+    parser.add_argument(
+        "--no-metadata-features",
+        action="store_true",
+        help="Disable using non-label metadata columns as additional tabular input features in multi-task mode.",
+    )
+    parser.add_argument("--tabular-hidden-dim", type=int, default=128)
+    parser.add_argument("--tabular-dropout", type=float, default=0.1)
     parser.add_argument("--epochs", type=int, default=40)
     parser.add_argument("--batch-size", type=int, default=24)
     parser.add_argument("--learning-rate", type=float, default=0.01)
@@ -929,7 +1771,11 @@ if __name__ == '__main__':
     parser.add_argument("--freeze-backbone-epochs", type=int, default=0)
     parser.add_argument("--balanced-sampler", action="store_true", help="Use a WeightedRandomSampler to balance classes in the train loader (binary only).")
     parser.add_argument("--early-stop-patience", type=int, default=0)
-    parser.add_argument("--early-stop-metric", choices=["auc/eval", "f1/eval", "loss/eval"], default="auc/eval")
+    parser.add_argument(
+        "--early-stop-metric",
+        choices=["auc/eval", "f1/eval", "loss/eval", "macro_auc/eval", "macro_f1/eval"],
+        default="auc/eval",
+    )
     parser.add_argument("--early-stop-min-delta", type=float, default=0.0)
     parser.add_argument("--sanity-overfit", action="store_true", help="Overfit a tiny subset to validate pipeline.")
     parser.add_argument("--sanity-samples", type=int, default=32)
@@ -956,7 +1802,26 @@ if __name__ == '__main__':
         help="Where to save the trained model (defaults to <base-folder>).",
     )
     parser.add_argument("--no-wandb", action="store_true")
+    parser.add_argument(
+        "--wandb-detail",
+        choices=["compact", "full"],
+        default="compact",
+        help="Controls how many per-task metrics are logged to wandb (compact reduces dashboard clutter).",
+    )
+    parser.add_argument(
+        "--label-stats",
+        action="store_true",
+        help="Print per-label dataset counts (pos/neg for binary; category counts for non-binary) and exit.",
+    )
     args = parser.parse_args()
+
+    _set_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.backends.cudnn.benchmark = True
+    try:
+        torch.set_float32_matmul_precision("high")
+    except Exception:
+        pass
 
     preprocess = Compose([
         RandomResizedCrop(224),
@@ -991,8 +1856,8 @@ if __name__ == '__main__':
     number_of_epochs = args.epochs
     fold = args.fold
     # column_groups keys are general, symbol, rounded, irregular, mixed, large, pleural, occupational
-    column_group = "mixed"
-    criterion_label = args.label  #  diffuse_pleural_thickening_nad
+    column_group = args.label_group
+    criterion_label = args.label  # single-label mode default
 
     if os.path.isfile(metadata_file):
         required_files = [metadata_file, mapping_file]
@@ -1025,6 +1890,40 @@ if __name__ == '__main__':
             sample_n=args.check_mapping_samples,
             seed=args.seed,
         )
+        raise SystemExit(0)
+
+    # Resolve label columns (same behavior as training, but without starting training)
+    if args.label_stats:
+        # Load base metadata (same path logic as training)
+        if os.path.isfile(metadata_file):
+            md = pd.read_csv(metadata_file)
+        else:
+            md = Preprocessor_Metadata.prepare_metadata(raw_metadata_file, anford_nr_file, mapping_file, nan_thresh, True)
+        md = _ensure_file_id(md, mapping_file)
+        md = md[md["fileID"] != -1].reset_index(drop=True)
+        if args.dedupe_by_fileid:
+            # Use provided labels list if available, otherwise fall back to criterion_label for dedupe.
+            dedupe_cols = args.labels if args.labels not in (None, "all") else criterion_label
+            md = _dedupe_by_file_id(md, dedupe_cols, drop_conflicts=args.drop_conflicting_fileid_labels)
+
+        # Determine label list
+        column_groups = Preprocessor_Metadata.get_column_name_groups(md, True)
+        general_cols = set(column_groups.get("general", []))
+        if args.labels is None:
+            label_cols = [criterion_label]
+        else:
+            labels_arg = str(args.labels).strip()
+            if labels_arg.lower() == "all":
+                label_cols = []
+                for group_name, cols in column_groups.items():
+                    if group_name == "general":
+                        continue
+                    label_cols.extend([c for c in cols if c not in general_cols])
+                label_cols = sorted(set(label_cols))
+            else:
+                label_cols = [c.strip() for c in labels_arg.split(",") if c.strip()]
+
+        print_label_stats(md, label_cols)
         raise SystemExit(0)
 
     # Split Train-Test:
@@ -1068,6 +1967,466 @@ if __name__ == '__main__':
     prepared_metadata = metadata
     column_groups = Preprocessor_Metadata.get_column_name_groups(metadata, True)  # group columns into logical
 
+    general_cols = set(column_groups.get("general", []))
+
+    # Multi-task / multi-label mode
+    if args.labels is not None:
+        labels_arg = str(args.labels).strip()
+        if labels_arg.lower() == "all":
+            label_cols = []
+            for group_name, cols in column_groups.items():
+                if group_name == "general":
+                    continue
+                label_cols.extend([c for c in cols if c not in general_cols])
+            label_cols = sorted(set(label_cols))
+        else:
+            label_cols = [c.strip() for c in labels_arg.split(",") if c.strip()]
+
+        missing_cols = [c for c in label_cols if c not in prepared_metadata.columns]
+        if missing_cols:
+            print(f"Warning: ignoring unknown label columns: {missing_cols}")
+            label_cols = [c for c in label_cols if c in prepared_metadata.columns]
+        if not label_cols:
+            raise SystemExit("Multi-task mode requested via --labels, but no valid label columns were found.")
+
+        if args.dedupe_by_fileid:
+            prepared_metadata = _dedupe_by_file_id(
+                prepared_metadata,
+                label_cols,
+                drop_conflicts=args.drop_conflicting_fileid_labels,
+            )
+
+        # Keep all rows; mask missing labels per-task.
+        metadata = prepared_metadata
+        test_metadata = metadata[metadata[f"Fold{fold}"] == "test"]
+        val_metadata = metadata[metadata[f"Fold{fold}"] == "val"]
+        train_metadata = metadata[metadata[f"Fold{fold}"] == "train"]
+
+        def _filter_any_label(df: pd.DataFrame) -> pd.DataFrame:
+            if df.empty:
+                return df
+            any_valid = np.zeros(len(df), dtype=bool)
+            for col in label_cols:
+                s = df[col]
+                valid = ~s.isna()
+                try:
+                    valid = valid & (s != -1)
+                except Exception:
+                    pass
+                any_valid |= valid.to_numpy()
+            return df[any_valid]
+
+        train_metadata = _filter_any_label(train_metadata)
+        val_metadata = _filter_any_label(val_metadata)
+        test_metadata = _filter_any_label(test_metadata)
+
+        if column_group == "all":
+            base_cols = [c for c in metadata.columns]
+        else:
+            base_cols = [c for c in column_groups.get(column_group, []) if c in metadata.columns]
+
+        cols_keep = sorted(set(base_cols) | set(label_cols) | {"fileID"})
+        current_train_metadata = train_metadata[cols_keep]
+        current_val_metadata = val_metadata[cols_keep]
+        current_test_metadata = test_metadata[cols_keep]
+
+        # Tabular features: all non-label, non-general columns in the kept metadata.
+        fold_cols = {f"Fold{i}" for i in range(n_folds)}
+        excluded = set(label_cols) | set(general_cols) | {"fileID"} | fold_cols
+        tabular_cols = [c for c in cols_keep if c not in excluded]
+        use_tabular = (not args.no_metadata_features) and len(tabular_cols) > 0
+        x_train = x_val = x_test = None
+        tabular_feature_names = []
+        if use_tabular:
+            x_train, x_val, x_test, tabular_feature_names = _prepare_tabular_matrices(
+                current_train_metadata,
+                current_val_metadata,
+                current_test_metadata,
+                tabular_cols,
+            )
+            print(f"Tabular features: raw_cols={len(tabular_cols)} encoded_dim={x_train.shape[1]}")
+        else:
+            print("Tabular features: disabled or none available.")
+
+        # Build per-task value maps and output sizes.
+        task_value_maps = {}
+        task_output_dims = {}
+        task_index_to_label = {}
+        for col in label_cols:
+            series = metadata[col]
+            valid = series[~series.isna()]
+            try:
+                valid = valid[valid != -1]
+            except Exception:
+                pass
+            raw_unique = valid.unique().tolist()
+            canon_unique = []
+            for v in raw_unique:
+                c = _canonical_label_value(v)
+                if c is not None:
+                    canon_unique.append(c)
+            canon_unique = list(dict.fromkeys(canon_unique))
+
+            # Binary labels: only if every value is coercible to {0,1}.
+            binary_vals = []
+            non_binary = False
+            for v in canon_unique:
+                b = _coerce_binary_label(v)
+                if b is None:
+                    non_binary = True
+                    break
+                binary_vals.append(int(b))
+            is_binary = (not non_binary) and (set(binary_vals).issubset({0, 1})) and (len(set(binary_vals)) <= 2)
+
+            if is_binary:
+                task_output_dims[col] = 1
+                task_value_maps[col] = {}
+                task_index_to_label[col] = ["0", "1"]
+            else:
+                # Stable ordering
+                unique_vals = sorted(canon_unique, key=lambda x: str(x))
+                task_output_dims[col] = len(unique_vals)
+                task_value_maps[col] = {v: i for i, v in enumerate(unique_vals)}
+                task_index_to_label[col] = [str(v) for v in unique_vals]
+
+        model = _build_multitask_model(
+            args.model,
+            task_output_dims=task_output_dims,
+            no_pretrained=args.no_pretrained,
+            head_dropout=args.head_dropout,
+            tabular_in_dim=int(x_train.shape[1]) if (use_tabular and x_train is not None) else 0,
+            tabular_hidden_dim=args.tabular_hidden_dim,
+            tabular_dropout=args.tabular_dropout,
+        )
+
+        # dataloader
+        n_workers = args.num_workers
+        gen = torch.Generator()
+        train_transform = preprocess_no_aug if args.sanity_overfit else preprocess
+        eval_transform = preprocess_no_aug
+
+        train_dataset = XRayMultiTaskDataset(
+            current_train_metadata,
+            root_folder,
+            label_columns=label_cols,
+            label_value_maps=task_value_maps,
+            label_output_dims=task_output_dims,
+            tabular_features=x_train if use_tabular else None,
+            transform=train_transform,
+        )
+        val_dataset = XRayMultiTaskDataset(
+            current_val_metadata,
+            root_folder,
+            label_columns=label_cols,
+            label_value_maps=task_value_maps,
+            label_output_dims=task_output_dims,
+            tabular_features=x_val if use_tabular else None,
+            transform=eval_transform,
+        )
+        test_dataset = XRayMultiTaskDataset(
+            current_test_metadata,
+            root_folder,
+            label_columns=label_cols,
+            label_value_maps=task_value_maps,
+            label_output_dims=task_output_dims,
+            tabular_features=x_test if use_tabular else None,
+            transform=eval_transform,
+        )
+
+        if args.balanced_sampler:
+            print("Warning: --balanced-sampler is only supported for single-label binary training; ignoring in multi-task mode.")
+
+        train_sampler = RandomSampler(train_dataset, replacement=False, generator=gen)
+        val_sampler = RandomSampler(val_dataset, replacement=False, generator=gen)
+        test_sampler = RandomSampler(test_dataset, replacement=False, generator=gen)
+
+        loader_kwargs = dict(
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=n_workers,
+            generator=gen,
+            drop_last=False,
+            pin_memory=(torch.cuda.is_available()),
+            persistent_workers=(n_workers > 0),
+        )
+        train_loader = DataLoader(train_dataset, sampler=train_sampler, **loader_kwargs)
+        val_loader = DataLoader(val_dataset, sampler=val_sampler, **loader_kwargs)
+        test_loader = DataLoader(test_dataset, sampler=test_sampler, **loader_kwargs)
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        model = model.to(device)
+
+        # Per-task criteria
+        criterion = {}
+        for task, out_dim in task_output_dims.items():
+            if out_dim == 1:
+                # pos_weight from train only (ignore missing labels)
+                s = current_train_metadata[task]
+                vals = []
+                for v in s.tolist():
+                    b = _coerce_binary_label(v)
+                    if b is None:
+                        continue
+                    vals.append(int(b))
+                arr = np.asarray(vals, dtype=int) if vals else np.asarray([], dtype=int)
+                pos = float((arr == 1).sum())
+                neg = float((arr == 0).sum())
+                pos_weight_val = (neg / max(1.0, pos)) if (pos + neg) > 0 else 1.0
+                pos_weight = torch.tensor([pos_weight_val], device=device)
+                bce = nn.BCEWithLogitsLoss(pos_weight=pos_weight, reduction="none")
+                criterion[task] = (bce, 1)
+                print(f"[{task}] BCEWithLogitsLoss(pos_weight={pos_weight_val:.4f}) [neg={neg:.0f} pos={pos:.0f}]")
+            else:
+                ce = nn.CrossEntropyLoss(reduction="none")
+                criterion[task] = (ce, out_dim)
+                print(f"[{task}] CrossEntropyLoss(classes={out_dim})")
+
+        scaler = GradScaler(device=device, enabled=(device == "cuda"))
+
+        def make_optimizer():
+            head_params, backbone_params = _split_head_backbone_params(model, args.model)
+            if backbone_params and args.backbone_lr_mult != 1.0:
+                return optim.AdamW(
+                    [
+                        {"params": backbone_params, "lr": learning_rate * args.backbone_lr_mult},
+                        {"params": head_params, "lr": learning_rate},
+                    ],
+                    weight_decay=args.weight_decay,
+                )
+            return optim.AdamW(head_params + backbone_params, lr=learning_rate, weight_decay=args.weight_decay)
+
+        def make_scheduler(optimizer, remaining_epochs: int):
+            total_steps = max(1, remaining_epochs * len(train_loader))
+            if len(optimizer.param_groups) == 2:
+                max_lr = [learning_rate * args.backbone_lr_mult, learning_rate]
+            else:
+                max_lr = learning_rate
+            return torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=max_lr, total_steps=total_steps)
+
+        if not args.no_wandb:
+            wandb.init(
+                project="Asbestosis",
+                config={
+                    "learning-rate": learning_rate,
+                    "dataset:": root_folder,
+                    "split folder": fold_folder,
+                    "number of training samples": len(train_loader.dataset),
+                    "number of val samples": len(val_loader.dataset),
+                    "number of test samples": len(test_loader.dataset),
+                    "epochs": number_of_epochs,
+                    "batch size": batch_size,
+                    "optimizer": "AdamW",
+                    "head_dropout": args.head_dropout,
+                    "Augmentation": str(preprocess),
+                    "Machine": "HPC",
+                    "model": args.model,
+                    "weight_decay": args.weight_decay,
+                    "labels": label_cols,
+                    "tabular_cols_raw": tabular_cols,
+                    "tabular_encoded_dim": int(x_train.shape[1]) if (use_tabular and x_train is not None) else 0,
+                    "Fold": fold,
+                    "metadata": metadata_file,
+                },
+                name=f"multitask_b={batch_size}_l={learning_rate}_n={number_of_epochs}_fold={fold}",
+            )
+            try:
+                wandb.define_metric("epoch/*", step_metric="epoch/*")
+                wandb.define_metric("average_loss/*", step_metric="epoch/*")
+                wandb.define_metric("macro_*/*", step_metric="epoch/*")
+            except Exception:
+                pass
+
+        if args.freeze_backbone_epochs > 0:
+            _freeze_backbone(model, args.model)
+            print(f"Freezing backbone for {args.freeze_backbone_epochs} epochs")
+        optimizer = make_optimizer()
+        lr_scheduler = make_scheduler(optimizer, remaining_epochs=number_of_epochs)
+
+        if args.sanity_overfit:
+            print("Warning: --sanity-overfit is implemented for single-label runs only; skipping.")
+
+        if args.early_stop_patience > 0 and args.eval_every == 0:
+            args.eval_every = 1
+            print("Early stopping enabled -> forcing --eval-every 1")
+
+        best_score = None
+        best_epoch = -1
+        best_path = os.path.join(output_folder, f"best_{args.model}_labels=multitask_fold={fold}.pth")
+        no_improve = 0
+        best_fixed_thresholds = None
+
+        # Map legacy early-stop metric to macro metrics in multi-task mode.
+        early_metric = args.early_stop_metric
+        if early_metric == "auc/eval":
+            early_metric = "macro_auc/eval"
+        if early_metric == "f1/eval":
+            early_metric = "macro_f1/eval"
+
+        for epoch in range(number_of_epochs):
+            if args.freeze_backbone_epochs and epoch == args.freeze_backbone_epochs:
+                _unfreeze_all(model)
+                optimizer = make_optimizer()
+                lr_scheduler = make_scheduler(optimizer, remaining_epochs=number_of_epochs - epoch)
+                print("Unfroze backbone and reset optimizer/scheduler")
+
+            train_results, train_avg_loss = run_epoch(
+                model, optimizer, lr_scheduler, criterion, scaler, train_loader, device, train=True, show_figs=False, max_steps=args.max_train_steps
+            )
+            train_metrics = log_multitask_metrics(
+                train_results,
+                train_avg_loss,
+                suffix="train",
+                epoch=epoch,
+                task_output_dims=task_output_dims,
+                task_index_to_label=task_index_to_label,
+                wandb_detail=args.wandb_detail,
+            )
+
+            do_eval = args.eval_every and (epoch % args.eval_every == 0 or epoch == number_of_epochs - 1)
+            do_test = args.test_every and (epoch % args.test_every == 0 or epoch == number_of_epochs - 1)
+
+            eval_metrics = None
+            if do_eval:
+                eval_results, eval_avg_loss = run_epoch(
+                    model, optimizer, None, criterion, scaler, val_loader, device, train=False, show_figs=False, max_steps=args.max_eval_steps
+                )
+                eval_metrics = log_multitask_metrics(
+                    eval_results,
+                    eval_avg_loss,
+                    suffix="eval",
+                    epoch=epoch,
+                    task_output_dims=task_output_dims,
+                    task_index_to_label=task_index_to_label,
+                    compute_thresholds=True,
+                    wandb_detail=args.wandb_detail,
+                )
+                fixed_thresholds_eval = {}
+                for task, out_dim in task_output_dims.items():
+                    if out_dim == 1:
+                        fixed_thresholds_eval[task] = eval_metrics.get(f"task/{task}/best_threshold_f1/eval")
+
+            if do_test:
+                test_results, test_avg_loss = run_epoch(
+                    model, optimizer, None, criterion, scaler, test_loader, device, train=False, show_figs=False, max_steps=args.max_eval_steps
+                )
+                log_multitask_metrics(
+                    test_results,
+                    test_avg_loss,
+                    suffix="test",
+                    epoch=epoch,
+                    task_output_dims=task_output_dims,
+                    task_index_to_label=task_index_to_label,
+                    wandb_detail=args.wandb_detail,
+                )
+
+            # Early stopping on eval metrics
+            if args.early_stop_patience > 0 and do_eval and eval_metrics is not None:
+                if early_metric == "macro_auc/eval":
+                    score = eval_metrics.get("macro_auc/eval")
+                elif early_metric == "macro_f1/eval":
+                    score = eval_metrics.get("macro_f1/eval")
+                else:
+                    score = -eval_metrics.get("average_loss/eval", float("inf"))
+                if score is None:
+                    continue
+
+                improved = False
+                if best_score is None:
+                    improved = True
+                else:
+                    delta = score - best_score
+                    improved = delta > args.early_stop_min_delta
+
+                if improved:
+                    best_score = float(score)
+                    best_epoch = epoch
+                    no_improve = 0
+                    best_fixed_thresholds = fixed_thresholds_eval
+                    checkpoint = {
+                        "model_state_dict": model.state_dict(),
+                        "epoch": best_epoch,
+                        "score": float(best_score),
+                        "labels": label_cols,
+                        "task_output_dims": task_output_dims,
+                        "task_index_to_label": task_index_to_label,
+                        "best_fixed_thresholds": best_fixed_thresholds,
+                    }
+                    torch.save(checkpoint, best_path)
+                    print(f"Saved best model to {best_path} (epoch {epoch}, score={best_score:.4f})")
+                else:
+                    no_improve += 1
+                    if no_improve >= args.early_stop_patience:
+                        print(f"Early stopping at epoch {epoch} (best epoch {best_epoch}, score={best_score:.4f})")
+                        break
+
+        final_epoch = epoch if number_of_epochs > 0 else -1
+
+        final_results, final_avg_loss = run_epoch(
+            model, optimizer, None, criterion, scaler, test_loader, device, train=False, max_steps=args.max_eval_steps
+        )
+        final_metrics = log_multitask_metrics(
+            final_results,
+            final_avg_loss,
+            suffix="final_test",
+            epoch=final_epoch,
+            task_output_dims=task_output_dims,
+            task_index_to_label=task_index_to_label,
+            fixed_thresholds=best_fixed_thresholds,
+            wandb_detail=args.wandb_detail,
+        )
+        if _wandb_is_active():
+            try:
+                for key in ("macro_f1/final_test", "macro_auc/final_test", "macro_accuracy/final_test", "average_loss/final_test"):
+                    if key in final_metrics:
+                        wandb.summary[key] = float(final_metrics[key])
+                # Also store per-task headline metrics (compact) in summary.
+                for task in label_cols:
+                    out_dim = int(task_output_dims[task])
+                    if out_dim == 1:
+                        for k in (f"task/{task}/auc/final_test", f"task/{task}/f1/final_test", f"task/{task}/f1@fixed_thr/final_test"):
+                            if k in final_metrics:
+                                wandb.summary[k] = float(final_metrics[k])
+                    else:
+                        for k in (f"task/{task}/auc_macro_ovr/final_test", f"task/{task}/f1_macro/final_test"):
+                            if k in final_metrics:
+                                wandb.summary[k] = float(final_metrics[k])
+            except Exception:
+                pass
+
+        # Evaluate best checkpoint if available.
+        if args.early_stop_patience > 0 and os.path.isfile(best_path):
+            try:
+                state = torch.load(best_path, map_location=device)
+                if isinstance(state, dict) and "model_state_dict" in state:
+                    model.load_state_dict(state["model_state_dict"])
+                    best_fixed_thresholds = state.get("best_fixed_thresholds") or best_fixed_thresholds
+                else:
+                    model.load_state_dict(state)
+                best_results, best_avg_loss = run_epoch(
+                    model, optimizer, None, criterion, scaler, test_loader, device, train=False, max_steps=args.max_eval_steps
+                )
+                log_multitask_metrics(
+                    best_results,
+                    best_avg_loss,
+                    suffix="best_test",
+                    epoch=best_epoch,
+                    task_output_dims=task_output_dims,
+                    task_index_to_label=task_index_to_label,
+                    fixed_thresholds=best_fixed_thresholds,
+                    wandb_detail=args.wandb_detail,
+                )
+            except Exception as e:
+                print(f"Warning: failed to evaluate best checkpoint ({best_path}): {e}")
+
+        torch.save(
+            model.state_dict(),
+            os.path.join(output_folder, f"asbestosis_{args.model}_n{number_of_epochs}_b{batch_size}_labels=multitask_fold={fold}.pth"),
+        )
+        if _wandb_is_active():
+            wandb.finish()
+        raise SystemExit(0)
+
+    # Single-label mode
     #for criterion_label in column_groups[column_group]:
     if criterion_label in metadata.keys() and criterion_label not in column_groups["general"]:
         metadata = prepared_metadata[prepared_metadata[criterion_label] != -1]
@@ -1122,6 +2481,7 @@ if __name__ == '__main__':
             generator=gen,
             drop_last=drop_last_train,
             pin_memory=(torch.cuda.is_available()),
+            persistent_workers=(n_workers > 0),
         )
 
         val_dataset = X_rayImageDataset(current_val_metadata, root_folder, label_column=criterion_label, transform=eval_transform)
@@ -1135,6 +2495,7 @@ if __name__ == '__main__':
             generator=gen,
             drop_last=False,
             pin_memory=False,
+            persistent_workers=(n_workers > 0),
         )
 
         test_dataset = X_rayImageDataset(current_test_metadata, root_folder, label_column=criterion_label, transform=eval_transform)
@@ -1148,6 +2509,7 @@ if __name__ == '__main__':
             generator=gen,
             drop_last=False,
             pin_memory=False,
+            persistent_workers=(n_workers > 0),
         )
 
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -1276,10 +2638,10 @@ if __name__ == '__main__':
 
                 # Early stopping on eval metrics
                 if args.early_stop_patience > 0 and do_eval:
-                    if args.early_stop_metric == "auc/eval":
-                        score = eval_metrics.get("auc/eval")
+                    if args.early_stop_metric in {"auc/eval", "macro_auc/eval"}:
+                        score = eval_metrics.get("auc/eval") or eval_metrics.get("auc_macro_ovr/eval")
                         higher_is_better = True
-                    elif args.early_stop_metric == "f1/eval":
+                    elif args.early_stop_metric in {"f1/eval", "macro_f1/eval"}:
                         score = eval_metrics.get("f1/eval")
                         higher_is_better = True
                     else:
@@ -1369,3 +2731,5 @@ if __name__ == '__main__':
         torch.save(model.state_dict(), os.path.join(output_folder, f'asbestosis_{args.model}_n{number_of_epochs}_b{batch_size}_label={criterion_label}_fold={fold}.pth'))
         if _wandb_is_active():
             wandb.finish()
+    else:
+        raise SystemExit(f"Label '{criterion_label}' not found in metadata (or is a general column). Use --label or --labels.")
