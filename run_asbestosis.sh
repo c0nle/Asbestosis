@@ -24,19 +24,18 @@ FOLD_DIR="${ASBESTOSIS_FOLD_DIR:-${PROJECT_DIR}/splits}"
 OUT_DIR="${ASBESTOSIS_OUT_DIR:-${PROJECT_DIR}/logs}"
 
 # Model/data options
-LABEL_COL="${ASBESTOSIS_LABEL:-mixed_shapes}"
-# Default to multitask if ASBESTOSIS_LABELS is unset.
-# - unset   -> multitask all labels
-# - empty   -> single-label mode (uses ASBESTOSIS_LABEL)
-# - value   -> multitask with that comma list or "all"
-# Default label set (your project’s “all labels”)
-LABELS_DEFAULT="small_rounded_right,small_rounded_left,small_rounded_size,small_irregular_right,small_irregular_left,small_irregular_size,mixed_shapes,diffuse_pleural_thickening_width,diffuse_pleural_thickening_extend,diffuse_pleural_location,localized_pleural_thickening_width,localized_pleural_thickening_extend,local_pleural_location,pleural_calcification_location,pleural_calcification_side,occupational_disease"
-LABELS="${ASBESTOSIS_LABELS-${LABELS_DEFAULT}}"
-LABEL_GROUP="${ASBESTOSIS_LABEL_GROUP-all}"
+SPLIT_LABEL="${ASBESTOSIS_SPLIT_LABEL:-mixed_shapes}"
+# Default label set: focus on well-supported tasks (rare/unstable tasks can be enabled via ASBESTOSIS_LABELS).
+DEFAULT_LABELS="mixed_shapes,diffuse_pleural_location,local_pleural_location,pleural_calcification_location,occupational_disease"
+# Train a subset of labels by setting ASBESTOSIS_LABELS; default is the stable label set.
+LABELS="${ASBESTOSIS_LABELS:-${DEFAULT_LABELS}}"
+PRIMARY_LABEL="${ASBESTOSIS_PRIMARY_LABEL:-mixed_shapes}"
+# Print the same label set in the focus line by default (override with ASBESTOSIS_FOCUS_LABELS).
+FOCUS_LABELS="${ASBESTOSIS_FOCUS_LABELS:-${DEFAULT_LABELS}}"
 FOLD="${ASBESTOSIS_FOLD:-0}"
 EPOCHS="${ASBESTOSIS_EPOCHS:-40}"
 BATCH_SIZE="${ASBESTOSIS_BATCH_SIZE:-24}"
-LR="${ASBESTOSIS_LR:-1e-4}"
+LR="${ASBESTOSIS_LR:-5e-5}"
 NUM_WORKERS="${ASBESTOSIS_NUM_WORKERS:-8}"
 EVAL_EVERY="${ASBESTOSIS_EVAL_EVERY:-1}"
 TEST_EVERY="${ASBESTOSIS_TEST_EVERY:-0}"
@@ -44,31 +43,23 @@ MAX_TRAIN_STEPS="${ASBESTOSIS_MAX_TRAIN_STEPS:-}"
 MAX_EVAL_STEPS="${ASBESTOSIS_MAX_EVAL_STEPS:-}"
 
 # Overfitting controls / model options
-MODEL="${ASBESTOSIS_MODEL:-vit_b_16}"
-HEAD_DROPOUT="${ASBESTOSIS_HEAD_DROPOUT:-0.1}"
-WEIGHT_DECAY="${ASBESTOSIS_WEIGHT_DECAY:-1e-4}"
+HEAD_DROPOUT="${ASBESTOSIS_HEAD_DROPOUT:-0.2}"
+WEIGHT_DECAY="${ASBESTOSIS_WEIGHT_DECAY:-1e-3}"
 FREEZE_BACKBONE_EPOCHS="${ASBESTOSIS_FREEZE_BACKBONE_EPOCHS:-5}"
 EARLY_STOP_PATIENCE="${ASBESTOSIS_EARLY_STOP_PATIENCE:-12}"
-EARLY_STOP_METRIC="${ASBESTOSIS_EARLY_STOP_METRIC:-auc/eval}"
+EARLY_STOP_METRIC="${ASBESTOSIS_EARLY_STOP_METRIC:-primary_auc/eval}"
 EARLY_STOP_MIN_DELTA="${ASBESTOSIS_EARLY_STOP_MIN_DELTA:-0.0}"
-BALANCED_SAMPLER="${ASBESTOSIS_BALANCED_SAMPLER:-1}"
 BACKBONE_LR_MULT="${ASBESTOSIS_BACKBONE_LR_MULT:-0.1}"
+MIN_POS_BACKBONE="${ASBESTOSIS_MIN_POS_BACKBONE:-20}"
+MIN_NEG_BACKBONE="${ASBESTOSIS_MIN_NEG_BACKBONE:-20}"
+HEAD_ONLY_LOSS_WEIGHT="${ASBESTOSIS_HEAD_ONLY_LOSS_WEIGHT:-0.25}"
 
 # Feature toggles (set to 1 to enable)
 NO_PRETRAINED="${ASBESTOSIS_NO_PRETRAINED:-0}"
 NO_WANDB="${ASBESTOSIS_NO_WANDB:-0}"
 WANDB_DETAIL="${ASBESTOSIS_WANDB_DETAIL:-compact}"
-DEDUPE_BY_FILEID="${ASBESTOSIS_DEDUPE_BY_FILEID:-0}"
-DROP_CONFLICTS="${ASBESTOSIS_DROP_CONFLICTING_FILEID_LABELS:-0}"
 CHECK_MAPPING="${ASBESTOSIS_CHECK_MAPPING:-0}"
 LABEL_STATS="${ASBESTOSIS_LABEL_STATS:-0}"
-SANITY_OVERFIT="${ASBESTOSIS_SANITY_OVERFIT:-0}"
-NO_META_FEATURES="${ASBESTOSIS_NO_METADATA_FEATURES:-0}"
-TABULAR_HIDDEN_DIM="${ASBESTOSIS_TABULAR_HIDDEN_DIM:-128}"
-TABULAR_DROPOUT="${ASBESTOSIS_TABULAR_DROPOUT:-0.1}"
-SANITY_SAMPLES="${ASBESTOSIS_SANITY_SAMPLES:-32}"
-SANITY_EPOCHS="${ASBESTOSIS_SANITY_EPOCHS:-50}"
-SANITY_LR="${ASBESTOSIS_SANITY_LR:-1e-3}"
 SEED="${ASBESTOSIS_SEED:-0}"
 
 cd "${PROJECT_DIR}"
@@ -107,9 +98,9 @@ ARGS=(
   "--base-folder" "${DATA_DIR}"
   "--fold-folder" "${FOLD_DIR}"
   "--output-folder" "${OUT_DIR}"
-  "--label" "${LABEL_COL}"
-  "--label-group" "${LABEL_GROUP}"
-  "--model" "${MODEL}"
+  "--split-label" "${SPLIT_LABEL}"
+  "--labels" "${LABELS}"
+  "--primary-label" "${PRIMARY_LABEL}"
   "--head-dropout" "${HEAD_DROPOUT}"
   "--fold" "${FOLD}"
   "--epochs" "${EPOCHS}"
@@ -118,22 +109,16 @@ ARGS=(
   "--weight-decay" "${WEIGHT_DECAY}"
   "--backbone-lr-mult" "${BACKBONE_LR_MULT}"
   "--freeze-backbone-epochs" "${FREEZE_BACKBONE_EPOCHS}"
+  "--min-pos-backbone" "${MIN_POS_BACKBONE}"
+  "--min-neg-backbone" "${MIN_NEG_BACKBONE}"
+  "--head-only-loss-weight" "${HEAD_ONLY_LOSS_WEIGHT}"
   "--num-workers" "${NUM_WORKERS}"
   "--seed" "${SEED}"
   "--wandb-detail" "${WANDB_DETAIL}"
 )
 
-if [[ -n "${LABELS}" ]]; then
-  ARGS+=("--labels" "${LABELS}")
-fi
-if [[ "${NO_META_FEATURES}" == "1" ]]; then
-  ARGS+=("--no-metadata-features")
-fi
-if [[ -n "${TABULAR_HIDDEN_DIM}" ]]; then
-  ARGS+=("--tabular-hidden-dim" "${TABULAR_HIDDEN_DIM}")
-fi
-if [[ -n "${TABULAR_DROPOUT}" ]]; then
-  ARGS+=("--tabular-dropout" "${TABULAR_DROPOUT}")
+if [[ -n "${FOCUS_LABELS}" ]]; then
+  ARGS+=("--focus-labels" "${FOCUS_LABELS}")
 fi
 
 if [[ -n "${EVAL_EVERY}" && "${EVAL_EVERY}" != "0" ]]; then
@@ -149,9 +134,6 @@ if [[ -n "${EARLY_STOP_PATIENCE}" && "${EARLY_STOP_PATIENCE}" != "0" ]]; then
     "--early-stop-min-delta" "${EARLY_STOP_MIN_DELTA}"
   )
 fi
-if [[ "${BALANCED_SAMPLER}" == "1" ]]; then
-  ARGS+=("--balanced-sampler")
-fi
 if [[ -n "${MAX_TRAIN_STEPS}" ]]; then
   ARGS+=("--max-train-steps" "${MAX_TRAIN_STEPS}")
 fi
@@ -165,25 +147,11 @@ fi
 if [[ "${NO_WANDB}" == "1" ]]; then
   ARGS+=("--no-wandb")
 fi
-if [[ "${DEDUPE_BY_FILEID}" == "1" ]]; then
-  ARGS+=("--dedupe-by-fileid")
-fi
-if [[ "${DROP_CONFLICTS}" == "1" ]]; then
-  ARGS+=("--drop-conflicting-fileid-labels")
-fi
 if [[ "${CHECK_MAPPING}" == "1" ]]; then
   ARGS+=("--check-mapping")
 fi
 if [[ "${LABEL_STATS}" == "1" ]]; then
   ARGS+=("--label-stats")
-fi
-if [[ "${SANITY_OVERFIT}" == "1" ]]; then
-  ARGS+=(
-    "--sanity-overfit"
-    "--sanity-samples" "${SANITY_SAMPLES}"
-    "--sanity-epochs" "${SANITY_EPOCHS}"
-    "--sanity-lr" "${SANITY_LR}"
-  )
 fi
 
 echo "Command: srun python main.py ${ARGS[*]}"
