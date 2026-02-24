@@ -293,6 +293,9 @@ def create_splits(
     output_folder: str,
     output_filename: str,
     training_label="mixed_shapes",
+    group_col: str = None,
+    strict_group_col: bool = False,
+    seed_base: int = 0,
     train_frac: float = 0.5,
     val_frac: float = 0.2,
     test_frac: float = 0.3,
@@ -309,14 +312,33 @@ def create_splits(
     for fold in range(n_testfolds):
         metadata[f'Fold{fold}'] = ''
 
-    group_col = "medicoID" if "medicoID" in metadata.columns else None
-    if group_col is None or metadata[group_col].nunique() < n_testfolds:
+    if group_col is None:
+        group_col = "medicoID" if "medicoID" in metadata.columns else None
+    elif group_col not in metadata.columns:
+        raise ValueError(f"Requested group_col '{group_col}' not found in metadata columns.")
+
+    if group_col is None:
+        raise ValueError("No suitable grouping column found for StratifiedGroupKFold.")
+    if strict_group_col and metadata[group_col].nunique() < n_testfolds:
+        raise ValueError(
+            f"Grouping column '{group_col}' has too few unique groups ({metadata[group_col].nunique()}) "
+            f"for n_testfolds={n_testfolds}."
+        )
+    if not strict_group_col and metadata[group_col].nunique() < n_testfolds:
         for candidate in ["grouping", "Anforderungsnummer", "fileID", "Aufnahmenummer"]:
             if candidate in metadata.columns and metadata[candidate].nunique() >= n_testfolds:
                 group_col = candidate
                 break
-    if group_col is None:
-        raise ValueError("No suitable grouping column found for StratifiedGroupKFold.")
+
+    # Normalize group ids (fixes overlaps due to dtype quirks like "123.0" vs "123").
+    try:
+        gs = metadata[group_col].astype("string").str.strip()
+        gs = gs.str.replace(r"\.0$", "", regex=True)
+        gs = gs.replace({"": pd.NA, "nan": pd.NA, "None": pd.NA})
+        metadata[group_col] = gs
+        metadata = metadata.dropna(subset=[group_col])
+    except Exception:
+        pass
 
     # Build group-level labels for (approx.) stratification.
     group_stats = (
@@ -333,7 +355,8 @@ def create_splits(
         raise ValueError(f"Not enough groups for train/val/test split using '{group_col}': only {len(groups)} groups.")
 
     for n_fold in range(n_testfolds):
-        trainval_groups, test_groups = _stratified_group_split(groups, group_labels, test_size=test_frac, seed=n_fold)
+        fold_seed = int(seed_base) + int(n_fold)
+        trainval_groups, test_groups = _stratified_group_split(groups, group_labels, test_size=test_frac, seed=fold_seed)
 
         # Split remaining into train/val: val as fraction of train+val.
         remaining_frac = max(1e-12, 1.0 - test_frac)
@@ -343,7 +366,9 @@ def create_splits(
         mask_tv = np.isin(groups, trainval_groups)
         tv_groups = groups[mask_tv]
         tv_labels = group_labels[mask_tv]
-        train_groups, val_groups = _stratified_group_split(tv_groups, tv_labels, test_size=val_rel, seed=10_000 + n_fold)
+        train_groups, val_groups = _stratified_group_split(
+            tv_groups, tv_labels, test_size=val_rel, seed=10_000 + fold_seed
+        )
 
         train_split = metadata[metadata[group_col].isin(train_groups)]
         val_split = metadata[metadata[group_col].isin(val_groups)]

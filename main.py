@@ -18,6 +18,7 @@ import torch
 import wandb
 from sklearn.metrics import (
     accuracy_score,
+    average_precision_score,
     balanced_accuracy_score,
     confusion_matrix,
     precision_recall_curve,
@@ -27,7 +28,7 @@ from sklearn.metrics import (
 )
 from torch import nn, optim
 from torch.amp import GradScaler
-from torch.utils.data import DataLoader, Dataset, RandomSampler
+from torch.utils.data import DataLoader, Dataset, RandomSampler, SequentialSampler, WeightedRandomSampler
 from torchvision.models import ViT_B_16_Weights, vit_b_16
 from torchvision.transforms.v2 import (
     ColorJitter,
@@ -187,7 +188,27 @@ def _ensure_writable_dir(path: str, fallback: Optional[str] = None) -> str:
 
 def _read_dicom_from_bytes(data: bytes) -> PIL.Image.Image:
     dicom_ds = pydicom.dcmread(io.BytesIO(data), force=True)
-    pixel_array = dicom_ds.pixel_array.astype(np.float32)
+    pixel_array = dicom_ds.pixel_array
+    try:
+        from pydicom.pixel_data_handlers.util import apply_modality_lut, apply_voi_lut
+
+        try:
+            pixel_array = apply_modality_lut(pixel_array, dicom_ds)
+        except Exception:
+            pass
+        try:
+            pixel_array = apply_voi_lut(pixel_array, dicom_ds)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+    pixel_array = np.asarray(pixel_array).astype(np.float32)
+    try:
+        if str(getattr(dicom_ds, "PhotometricInterpretation", "")).upper() == "MONOCHROME1":
+            pixel_array = float(np.nanmax(pixel_array)) - pixel_array
+    except Exception:
+        pass
     min_val = np.percentile(pixel_array, 0.5)
     max_val = np.percentile(pixel_array, 99.5)
     denom = (max_val - min_val) if (max_val - min_val) != 0 else 1.0
@@ -546,6 +567,9 @@ def log_multitask_metrics(
     fixed_thresholds: Optional[Dict[str, float]] = None,
     compute_thresholds: bool = False,
     wandb_detail: str = "compact",
+    threshold_strategy: str = "fbeta",
+    fbeta: float = 2.0,
+    target_precision: float = 0.5,
 ) -> dict:
     metrics_all: dict = {
         f"epoch/{suffix}": epoch,
@@ -554,6 +578,7 @@ def log_multitask_metrics(
 
     per_task_f1 = []
     per_task_auc = []
+    per_task_pr_auc = []
     per_task_acc = []
 
     def _should_log_task_metrics() -> bool:
@@ -591,6 +616,13 @@ def log_multitask_metrics(
             except Exception:
                 auc_val = float("nan")
 
+        pr_auc_val = float("nan")
+        if unique_true.size >= 2:
+            try:
+                pr_auc_val = float(average_precision_score(y_true, scores))
+            except Exception:
+                pr_auc_val = float("nan")
+
         task_metrics = {
             f"task/{task}/accuracy/{suffix}": acc,
             f"task/{task}/balanced_accuracy/{suffix}": bal_acc,
@@ -598,6 +630,7 @@ def log_multitask_metrics(
             f"task/{task}/recall/{suffix}": float(recall),
             f"task/{task}/f1/{suffix}": float(f1),
             f"task/{task}/auc/{suffix}": float(auc_val),
+            f"task/{task}/pr_auc/{suffix}": float(pr_auc_val),
         }
 
         if compute_thresholds and unique_true.size >= 2:
@@ -608,6 +641,20 @@ def log_multitask_metrics(
                     best_f1_idx = int(np.nanargmax(pr_f1))
                     best_thr_f1 = float(pr_thr[best_f1_idx])
                     task_metrics[f"task/{task}/best_threshold_f1/{suffix}"] = best_thr_f1
+
+                    beta2 = float(fbeta) ** 2
+                    pr_fbeta = (1 + beta2) * pr_prec[:-1] * pr_rec[:-1] / (beta2 * pr_prec[:-1] + pr_rec[:-1] + 1e-12)
+                    best_fbeta_idx = int(np.nanargmax(pr_fbeta))
+                    task_metrics[f"task/{task}/best_threshold_fbeta/{suffix}"] = float(pr_thr[best_fbeta_idx])
+
+                    # Max recall subject to precision >= target_precision.
+                    p_mask = pr_prec[:-1] >= float(target_precision)
+                    if np.any(p_mask):
+                        cand = np.where(p_mask)[0]
+                        best_idx = int(cand[np.nanargmax(pr_rec[:-1][cand])])
+                        task_metrics[
+                            f"task/{task}/best_threshold_recall_at_p{float(target_precision):.2f}/{suffix}"
+                        ] = float(pr_thr[best_idx])
             except Exception:
                 pass
 
@@ -627,6 +674,7 @@ def log_multitask_metrics(
         metrics_all.update(task_metrics)
         per_task_f1.append(float(f1))
         per_task_auc.append(float(auc_val) if np.isfinite(auc_val) else float("nan"))
+        per_task_pr_auc.append(float(pr_auc_val) if np.isfinite(pr_auc_val) else float("nan"))
         per_task_acc.append(float(acc))
 
         if _wandb_is_active() and _should_log_task_metrics():
@@ -649,6 +697,7 @@ def log_multitask_metrics(
     metrics_all[f"macro_accuracy/{suffix}"] = float(np.nanmean(per_task_acc)) if per_task_acc else float("nan")
     metrics_all[f"macro_f1/{suffix}"] = float(np.nanmean(per_task_f1)) if per_task_f1 else float("nan")
     metrics_all[f"macro_auc/{suffix}"] = float(np.nanmean(per_task_auc)) if per_task_auc else float("nan")
+    metrics_all[f"macro_pr_auc/{suffix}"] = float(np.nanmean(per_task_pr_auc)) if per_task_pr_auc else float("nan")
 
     _wandb_log(metrics_all)
     print(
@@ -656,7 +705,8 @@ def log_multitask_metrics(
         f"loss={metrics_all.get(f'average_loss/{suffix}', float('nan')):.4f} "
         f"macro_acc={metrics_all.get(f'macro_accuracy/{suffix}', float('nan')):.3f} "
         f"macro_f1={metrics_all.get(f'macro_f1/{suffix}', float('nan')):.3f} "
-        f"macro_auc={metrics_all.get(f'macro_auc/{suffix}', float('nan')):.3f}"
+        f"macro_auc={metrics_all.get(f'macro_auc/{suffix}', float('nan')):.3f} "
+        f"macro_pr_auc={metrics_all.get(f'macro_pr_auc/{suffix}', float('nan')):.3f}"
     )
     return metrics_all
 
@@ -677,11 +727,96 @@ def _print_focus_line(metrics: dict, suffix: str, epoch: int, focus_labels: List
     parts = []
     for lab in focus_labels:
         auc = metrics.get(f"task/{lab}/auc/{suffix}")
+        pr_auc = metrics.get(f"task/{lab}/pr_auc/{suffix}")
+        rec = metrics.get(f"task/{lab}/recall/{suffix}")
         f1 = metrics.get(f"task/{lab}/f1/{suffix}")
         auc_s = f"{float(auc):.3f}" if auc is not None and np.isfinite(auc) else "nan"
+        pr_auc_s = f"{float(pr_auc):.3f}" if pr_auc is not None and np.isfinite(pr_auc) else "nan"
+        rec_s = f"{float(rec):.3f}" if rec is not None and np.isfinite(rec) else "nan"
         f1_s = f"{float(f1):.3f}" if f1 is not None and np.isfinite(f1) else "nan"
-        parts.append(f"{lab} auc={auc_s} f1={f1_s}")
+        parts.append(f"{lab} auc={auc_s} pr_auc={pr_auc_s} rec={rec_s} f1={f1_s}")
     print(f"{suffix} focus (epoch {epoch}): " + " | ".join(parts))
+
+
+def _normalize_group_id(value) -> Optional[str]:
+    if value is None:
+        return None
+    try:
+        if isinstance(value, float) and np.isnan(value):
+            return None
+    except Exception:
+        pass
+    s = str(value).strip()
+    if not s or s.lower() in {"nan", "none"}:
+        return None
+    if s.endswith(".0"):
+        s = s[:-2]
+    return s
+
+
+def _leakage_check(train_df: pd.DataFrame, val_df: pd.DataFrame, test_df: pd.DataFrame, group_col: str) -> Tuple[int, int, int]:
+    if group_col not in train_df.columns or group_col not in val_df.columns or group_col not in test_df.columns:
+        return 0, 0, 0
+
+    def _to_set(df: pd.DataFrame) -> set:
+        vals = [_normalize_group_id(v) for v in df[group_col].tolist()]
+        return {v for v in vals if v is not None}
+
+    tr = _to_set(train_df)
+    va = _to_set(val_df)
+    te = _to_set(test_df)
+    return len(tr & va), len(tr & te), len(va & te)
+
+
+def _choose_group_col(metadata: pd.DataFrame, requested: Optional[str], n_folds: int) -> Optional[str]:
+    req = (requested or "").strip()
+    if req.lower() in {"", "none", "null", "off", "disable", "disabled"}:
+        return None
+    if req.lower() == "auto":
+        candidates = ["medicoID", "Anforderungsnummer", "Aufnahmenummer", "fileID"]
+    else:
+        candidates = [req]
+
+    for c in candidates:
+        if c in metadata.columns and int(metadata[c].nunique(dropna=True)) >= int(n_folds):
+            return c
+    return None
+
+
+def _print_focus_confusions(
+    results_by_task: dict,
+    thresholds: Dict[str, float],
+    suffix: str,
+    epoch: int,
+    focus_labels: List[str],
+) -> None:
+    if not focus_labels:
+        return
+    lines = []
+    for task in focus_labels:
+        data = results_by_task.get(task)
+        if not data:
+            continue
+        y_true = data["y_true"].detach().cpu().numpy()
+        y_prob = data["y_prob"].detach().cpu().numpy()
+        y_mask = data["y_mask"].detach().cpu().numpy().astype(bool)
+        if y_true.size == 0 or y_mask.sum() == 0:
+            continue
+        y_true = y_true[y_mask].astype(int)
+        scores = y_prob.reshape(-1)[y_mask]
+        if np.unique(y_true).size < 2:
+            continue
+        thr = float(thresholds.get(task, 0.5) if thresholds else 0.5)
+        y_pred = (scores >= thr).astype(int)
+        cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
+        tn, fp, fn, tp = (int(cm[0, 0]), int(cm[0, 1]), int(cm[1, 0]), int(cm[1, 1]))
+        precision, recall, f1, _ = precision_recall_fscore_support(y_true, y_pred, average="binary", zero_division=0)
+        lines.append(
+            f"{task} thr={thr:.3f} tp={tp} fp={fp} tn={tn} fn={fn} "
+            f"prec={float(precision):.3f} rec={float(recall):.3f} f1={float(f1):.3f}"
+        )
+    if lines:
+        print(f"{suffix} focus confusion (epoch {epoch}): " + " | ".join(lines))
 
 
 def check_mapping_merge(
@@ -771,7 +906,15 @@ def main() -> None:
     parser.add_argument("--early-stop-patience", type=int, default=0)
     parser.add_argument(
         "--early-stop-metric",
-        choices=["primary_auc/eval", "primary_f1/eval", "macro_auc/eval", "macro_f1/eval", "loss/eval"],
+        choices=[
+            "primary_auc/eval",
+            "primary_pr_auc/eval",
+            "primary_f1/eval",
+            "macro_auc/eval",
+            "macro_pr_auc/eval",
+            "macro_f1/eval",
+            "loss/eval",
+        ],
         default="primary_auc/eval",
     )
     parser.add_argument("--early-stop-min-delta", type=float, default=0.0)
@@ -780,6 +923,10 @@ def main() -> None:
         default="mixed_shapes",
         help="Primary label to optimize/early-stop on (must be included in --labels).",
     )
+    parser.add_argument("--train-sampler", choices=["random", "primary_balanced"], default="primary_balanced")
+    parser.add_argument("--threshold-strategy", choices=["f1", "fbeta", "recall_at_precision"], default="recall_at_precision")
+    parser.add_argument("--fbeta", type=float, default=2.0)
+    parser.add_argument("--target-precision", type=float, default=0.5)
     parser.add_argument(
         "--min-pos-backbone",
         type=int,
@@ -815,6 +962,17 @@ def main() -> None:
         "--fold-folder",
         default=None,
         help="Where to write stratified split CSVs (defaults to <base-folder>/strat_dichotom_splits).",
+    )
+    parser.add_argument(
+        "--group-splits-by",
+        default="auto",
+        help="Column used to group samples when generating splits (prevents patient leakage). Use 'none' to disable override.",
+    )
+    parser.add_argument(
+        "--leakage-action",
+        choices=["error", "warn", "ignore"],
+        default="error",
+        help="What to do if group IDs overlap between train/val/test within a fold.",
     )
     parser.add_argument(
         "--output-folder",
@@ -950,12 +1108,22 @@ def main() -> None:
         metadata = metadata[metadata["fileID"] != -1]
         if args.split_label not in metadata.columns:
             raise SystemExit(f"Split label '{args.split_label}' not found in metadata.")
+        group_col = _choose_group_col(metadata, requested=str(getattr(args, "group_splits_by", "auto")), n_folds=n_folds)
+        if group_col is None:
+            raise SystemExit(
+                f"Cannot generate grouped splits: no suitable grouping column found for --group-splits-by={args.group_splits_by!r}. "
+                "Try --group-splits-by Anforderungsnummer."
+            )
+        print(f"Split grouping column: {group_col}")
         metadata = Preprocessor_Metadata.create_splits(
             metadata,
             n_folds,
             fold_folder,
             fold_splitted_metadata_filename,
             args.split_label,
+            group_col=group_col,
+            strict_group_col=True,
+            seed_base=int(args.seed),
         )
     else:
         metadata = _ensure_file_id(metadata, mapping_file)
@@ -988,6 +1156,54 @@ def main() -> None:
     test_metadata = prepared_metadata[prepared_metadata[f"Fold{fold}"] == "test"]
     val_metadata = prepared_metadata[prepared_metadata[f"Fold{fold}"] == "val"]
     train_metadata = prepared_metadata[prepared_metadata[f"Fold{fold}"] == "train"]
+
+    group_col = _choose_group_col(prepared_metadata, requested=str(getattr(args, "group_splits_by", "auto")), n_folds=n_folds)
+    if group_col is not None:
+        ov_tv, ov_tt, ov_vt = _leakage_check(train_metadata, val_metadata, test_metadata, group_col=str(group_col))
+        if (ov_tv or ov_tt or ov_vt) and str(args.leakage_action) != "ignore":
+            msg = (
+                f"Leakage warning: '{group_col}' overlaps between splits "
+                f"(train∩val={ov_tv}, train∩test={ov_tt}, val∩test={ov_vt})."
+            )
+            if str(args.leakage_action) == "warn":
+                print("WARNING: " + msg)
+            else:
+                # If splits were loaded from disk, try to regenerate once with strict grouping.
+                if not needs_splits:
+                    print(msg + " Regenerating splits with strict grouping...")
+                    if os.path.isfile(metadata_file):
+                        base_md = pd.read_csv(metadata_file)
+                    else:
+                        base_md = Preprocessor_Metadata.prepare_metadata(
+                            raw_metadata_file, anford_nr_file, mapping_file, nan_thresh, True
+                        )
+                    base_md = _ensure_file_id(base_md, mapping_file)
+                    base_md = base_md[base_md["fileID"] != -1]
+                    group_col = _choose_group_col(base_md, requested=str(getattr(args, "group_splits_by", "auto")), n_folds=n_folds)
+                    if group_col is None:
+                        raise SystemExit(msg)
+                    metadata = Preprocessor_Metadata.create_splits(
+                        base_md,
+                        n_folds,
+                        fold_folder,
+                        fold_splitted_metadata_filename,
+                        args.split_label,
+                        group_col=group_col,
+                        strict_group_col=True,
+                        seed_base=int(args.seed),
+                    )
+                    prepared_metadata = metadata.reset_index(drop=True)
+                    column_groups = Preprocessor_Metadata.get_column_name_groups(prepared_metadata, True)
+                    general_cols = set(column_groups.get("general", []))
+                    test_metadata = prepared_metadata[prepared_metadata[f"Fold{fold}"] == "test"]
+                    val_metadata = prepared_metadata[prepared_metadata[f"Fold{fold}"] == "val"]
+                    train_metadata = prepared_metadata[prepared_metadata[f"Fold{fold}"] == "train"]
+                    ov_tv, ov_tt, ov_vt = _leakage_check(train_metadata, val_metadata, test_metadata, group_col=str(group_col))
+                    if ov_tv or ov_tt or ov_vt:
+                        raise SystemExit(msg)
+                    print("Leakage fixed by regenerating splits.")
+                else:
+                    raise SystemExit(msg)
 
     def _filter_any_label(df: pd.DataFrame) -> pd.DataFrame:
         if df.empty:
@@ -1131,9 +1347,39 @@ def main() -> None:
         pin_memory=(torch.cuda.is_available()),
         persistent_workers=(n_workers > 0),
     )
-    train_loader = DataLoader(train_dataset, sampler=RandomSampler(train_dataset, generator=gen), **loader_kwargs)
-    val_loader = DataLoader(val_dataset, sampler=RandomSampler(val_dataset, generator=gen), **loader_kwargs)
-    test_loader = DataLoader(test_dataset, sampler=RandomSampler(test_dataset, generator=gen), **loader_kwargs)
+    if str(args.train_sampler) == "primary_balanced":
+        mapping = task_value_maps.get(primary_label, {})
+        s = train_metadata[primary_label]
+        miss = _missing_mask(s)
+        pos_n = 0
+        neg_n = 0
+        labels_for_weight = []
+        for v, is_miss in zip(s.tolist(), miss.tolist()):
+            if is_miss:
+                labels_for_weight.append(None)
+                continue
+            key = _canonical_label_value(v)
+            if key is None or key not in mapping:
+                labels_for_weight.append(None)
+                continue
+            y = int(mapping[key])
+            labels_for_weight.append(y)
+            if y == 1:
+                pos_n += 1
+            else:
+                neg_n += 1
+        pos_w = (neg_n / max(1, pos_n)) if (pos_n + neg_n) > 0 else 1.0
+        weights = [pos_w if y == 1 else 1.0 for y in labels_for_weight]
+        # Missing/unknown labels get neutral weight.
+        weights = [1.0 if y is None else w for y, w in zip(labels_for_weight, weights)]
+        sampler = WeightedRandomSampler(weights=weights, num_samples=len(weights), replacement=True)
+        print(f"Train sampler: primary_balanced ({primary_label}) pos={pos_n} neg={neg_n} pos_weight={pos_w:.4f}")
+        train_loader = DataLoader(train_dataset, sampler=sampler, **loader_kwargs)
+    else:
+        train_loader = DataLoader(train_dataset, sampler=RandomSampler(train_dataset, generator=gen), **loader_kwargs)
+    # Deterministic evaluation: no shuffling/sampling noise.
+    val_loader = DataLoader(val_dataset, sampler=SequentialSampler(val_dataset), **loader_kwargs)
+    test_loader = DataLoader(test_dataset, sampler=SequentialSampler(test_dataset), **loader_kwargs)
 
     model = _build_vit_multitask(label_cols, no_pretrained=bool(args.no_pretrained), head_dropout=float(args.head_dropout))
     model = model.to(device)
@@ -1188,9 +1434,15 @@ def main() -> None:
                 "metadata": metadata_file,
                 "bce_only": True,
                 "primary_label": primary_label,
+                "train_sampler": str(args.train_sampler),
                 "min_pos_backbone": int(args.min_pos_backbone),
                 "min_neg_backbone": int(args.min_neg_backbone),
                 "head_only_loss_weight": float(args.head_only_loss_weight),
+                "threshold_strategy": str(args.threshold_strategy),
+                "fbeta": float(args.fbeta),
+                "target_precision": float(args.target_precision),
+                "group_splits_by": str(args.group_splits_by),
+                "leakage_action": str(args.leakage_action),
             },
             name=f"multitask_vit_b={int(args.batch_size)}_l={float(args.learning_rate)}_n={int(args.epochs)}_fold={fold}",
         )
@@ -1253,7 +1505,7 @@ def main() -> None:
                 val_loader,
                 device,
                 train=False,
-                max_steps=args.max_eval_steps,
+                max_steps=None,
                 backbone_tasks=backbone_tasks,
                 head_only_loss_weight=float(args.head_only_loss_weight),
             )
@@ -1265,10 +1517,27 @@ def main() -> None:
                 task_index_to_label=task_index_to_label,
                 compute_thresholds=True,
                 wandb_detail=args.wandb_detail,
+                threshold_strategy=str(args.threshold_strategy),
+                fbeta=float(args.fbeta),
+                target_precision=float(args.target_precision),
             )
             _print_focus_line(eval_metrics, suffix="eval", epoch=epoch, focus_labels=focus_labels)
             for task in label_cols:
-                fixed_thresholds_eval[task] = eval_metrics.get(f"task/{task}/best_threshold_f1/eval")
+                if str(args.threshold_strategy) == "recall_at_precision":
+                    fixed_thresholds_eval[task] = eval_metrics.get(
+                        f"task/{task}/best_threshold_recall_at_p{float(args.target_precision):.2f}/eval"
+                    )
+                elif str(args.threshold_strategy) == "fbeta":
+                    fixed_thresholds_eval[task] = eval_metrics.get(f"task/{task}/best_threshold_fbeta/eval")
+                else:
+                    fixed_thresholds_eval[task] = eval_metrics.get(f"task/{task}/best_threshold_f1/eval")
+            _print_focus_confusions(
+                eval_results,
+                thresholds=fixed_thresholds_eval,
+                suffix="eval",
+                epoch=epoch,
+                focus_labels=focus_labels,
+            )
 
         if do_test:
             test_results, test_avg_loss = run_epoch(
@@ -1280,7 +1549,7 @@ def main() -> None:
                 test_loader,
                 device,
                 train=False,
-                max_steps=args.max_eval_steps,
+                max_steps=None,
                 backbone_tasks=backbone_tasks,
                 head_only_loss_weight=float(args.head_only_loss_weight),
             )
@@ -1298,10 +1567,14 @@ def main() -> None:
             metric = str(args.early_stop_metric)
             if metric == "primary_auc/eval":
                 score = eval_metrics.get(f"task/{primary_label}/auc/eval")
+            elif metric == "primary_pr_auc/eval":
+                score = eval_metrics.get(f"task/{primary_label}/pr_auc/eval")
             elif metric == "primary_f1/eval":
                 score = eval_metrics.get(f"task/{primary_label}/f1/eval")
             elif metric == "macro_auc/eval":
                 score = eval_metrics.get("macro_auc/eval")
+            elif metric == "macro_pr_auc/eval":
+                score = eval_metrics.get("macro_pr_auc/eval")
             elif metric == "macro_f1/eval":
                 score = eval_metrics.get("macro_f1/eval")
             else:
@@ -1344,7 +1617,7 @@ def main() -> None:
         test_loader,
         device,
         train=False,
-        max_steps=args.max_eval_steps,
+        max_steps=None,
         backbone_tasks=backbone_tasks,
         head_only_loss_weight=float(args.head_only_loss_weight),
     )
@@ -1356,12 +1629,29 @@ def main() -> None:
         task_index_to_label=task_index_to_label,
         fixed_thresholds=best_fixed_thresholds,
         wandb_detail=args.wandb_detail,
+        threshold_strategy=str(args.threshold_strategy),
+        fbeta=float(args.fbeta),
+        target_precision=float(args.target_precision),
     )
     _print_focus_line(final_metrics, suffix="final_test", epoch=final_epoch, focus_labels=focus_labels)
+    if best_fixed_thresholds:
+        _print_focus_confusions(
+            final_results,
+            thresholds=best_fixed_thresholds,
+            suffix="final_test",
+            epoch=final_epoch,
+            focus_labels=focus_labels,
+        )
 
     if _wandb_is_active():
         try:
-            for key in ("macro_f1/final_test", "macro_auc/final_test", "macro_accuracy/final_test", "average_loss/final_test"):
+            for key in (
+                "macro_f1/final_test",
+                "macro_auc/final_test",
+                "macro_pr_auc/final_test",
+                "macro_accuracy/final_test",
+                "average_loss/final_test",
+            ):
                 if key in final_metrics:
                     wandb.summary[key] = float(final_metrics[key])
         except Exception:
@@ -1383,7 +1673,7 @@ def main() -> None:
                 test_loader,
                 device,
                 train=False,
-                max_steps=args.max_eval_steps,
+                max_steps=None,
                 backbone_tasks=backbone_tasks,
                 head_only_loss_weight=float(args.head_only_loss_weight),
             )
@@ -1395,8 +1685,19 @@ def main() -> None:
                 task_index_to_label=task_index_to_label,
                 fixed_thresholds=best_fixed_thresholds,
                 wandb_detail=args.wandb_detail,
+                threshold_strategy=str(args.threshold_strategy),
+                fbeta=float(args.fbeta),
+                target_precision=float(args.target_precision),
             )
             _print_focus_line(best_metrics, suffix="best_test", epoch=int(state.get("epoch", best_epoch)) if isinstance(state, dict) else best_epoch, focus_labels=focus_labels)
+            if best_fixed_thresholds:
+                _print_focus_confusions(
+                    best_results,
+                    thresholds=best_fixed_thresholds,
+                    suffix="best_test",
+                    epoch=int(state.get("epoch", best_epoch)) if isinstance(state, dict) else best_epoch,
+                    focus_labels=focus_labels,
+                )
         except Exception as e:
             print(f"Warning: failed to evaluate best checkpoint ({best_path}): {e}")
 
