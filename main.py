@@ -298,6 +298,21 @@ def _find_xray_path(img_dir: str, file_id: str) -> str:
     return os.path.join(img_dir, f"{file_id}.zip")
 
 
+def _filter_rows_with_images(df: pd.DataFrame, img_dir: str) -> pd.DataFrame:
+    if df.empty:
+        return df
+    keep = []
+    for fid in df["fileID"].tolist():
+        try:
+            file_id = str(int(fid))
+        except Exception:
+            keep.append(False)
+            continue
+        keep.append(_find_valid_xray_path(img_dir, file_id) is not None)
+    keep = np.asarray(keep, dtype=bool)
+    return df.loc[keep].reset_index(drop=True)
+
+
 def _binary_value_map_from_series(series: pd.Series, task: str) -> Tuple[Dict[object, int], List[str]]:
     """
     Build a stable {canonical_value -> 0/1} mapping for a label column.
@@ -468,6 +483,7 @@ def run_epoch(
     max_steps: Optional[int],
     backbone_tasks: Optional[set] = None,
     head_only_loss_weight: float = 0.25,
+    task_weights: Optional[Dict[str, float]] = None,
 ) -> Tuple[Dict[str, dict], float]:
     if train:
         model.train()
@@ -518,6 +534,8 @@ def run_epoch(
                 weight = 1.0
                 if backbone_tasks is not None and task not in backbone_tasks:
                     weight = float(head_only_loss_weight)
+                if task_weights is not None and task in task_weights:
+                    weight = weight * float(task_weights[task])
                 loss_num = loss_num + task_loss * weight
                 weight_sum += weight
             loss = loss_num / max(1.0, weight_sum)
@@ -924,6 +942,19 @@ def main() -> None:
         help="Primary label to optimize/early-stop on (must be included in --labels).",
     )
     parser.add_argument("--train-sampler", choices=["random", "primary_balanced"], default="primary_balanced")
+    parser.add_argument(
+        "--primary-balanced-max-pos-weight",
+        type=float,
+        default=10.0,
+        help="Cap for the positive sampling weight used by --train-sampler primary_balanced (prevents extreme oversampling).",
+    )
+    parser.add_argument("--task-weighting", choices=["equal", "present", "sqrt_present"], default="equal")
+    parser.add_argument(
+        "--primary-task-weight",
+        type=float,
+        default=1.0,
+        help="Extra multiplier applied to the primary task in the multi-task loss. Set <=0 to auto-tune from data.",
+    )
     parser.add_argument("--threshold-strategy", choices=["f1", "fbeta", "recall_at_precision"], default="recall_at_precision")
     parser.add_argument("--fbeta", type=float, default=2.0)
     parser.add_argument("--target-precision", type=float, default=0.5)
@@ -1219,6 +1250,22 @@ def main() -> None:
     val_metadata = _filter_any_label(val_metadata)
     test_metadata = _filter_any_label(test_metadata)
 
+    # Filter out rows without corresponding image files early, so:
+    # - train stats/degeneracy checks are accurate,
+    # - samplers match the actual dataset length,
+    # - eval/test metrics aren't affected by missing images.
+    n_tr0, n_va0, n_te0 = len(train_metadata), len(val_metadata), len(test_metadata)
+    train_metadata = _filter_rows_with_images(train_metadata, root_folder)
+    val_metadata = _filter_rows_with_images(val_metadata, root_folder)
+    test_metadata = _filter_rows_with_images(test_metadata, root_folder)
+    if (len(train_metadata), len(val_metadata), len(test_metadata)) != (n_tr0, n_va0, n_te0):
+        print(
+            "Filtered missing images: "
+            f"train {n_tr0}->{len(train_metadata)}, "
+            f"val {n_va0}->{len(val_metadata)}, "
+            f"test {n_te0}->{len(test_metadata)}"
+        )
+
     # Build per-task value maps (always binary 0/1) and names for logging.
     task_value_maps: Dict[str, Dict[object, int]] = {}
     task_index_to_label: Dict[str, List[str]] = {}
@@ -1287,6 +1334,42 @@ def main() -> None:
 
     print(f"Active tasks for this fold: {len(label_cols)} -> " + ", ".join(label_cols))
 
+    # Optional: task loss weighting to reduce noise from very sparse tasks.
+    task_weights = {t: 1.0 for t in label_cols}
+    tw = str(args.task_weighting)
+    if tw != "equal":
+        raw = {}
+        for t in label_cols:
+            present = float(train_task_stats.get(t, {}).get("present", 0.0))
+            if tw == "present":
+                raw[t] = max(1.0, present)
+            else:
+                raw[t] = max(1.0, float(np.sqrt(present)))
+        mean_w = float(np.mean(list(raw.values()))) if raw else 1.0
+        if mean_w <= 0:
+            mean_w = 1.0
+        task_weights = {t: float(raw[t]) / mean_w for t in raw}
+    primary_tw = float(args.primary_task_weight)
+    if primary_tw <= 0:
+        # Auto: bump the primary task slightly if it is at least as well-supported as the median task.
+        # Keep it modest to avoid overfitting the validation set via the primary objective.
+        presents = [float(train_task_stats.get(t, {}).get("present", 0.0)) for t in label_cols]
+        median_present = float(np.median(presents)) if presents else 0.0
+        primary_present = float(train_task_stats.get(primary_label, {}).get("present", 0.0))
+        primary_tw = 1.25 if primary_present >= median_present and primary_present > 0 else 1.0
+        print(f"Auto primary_task_weight={primary_tw:.2f} (primary_present={primary_present:.0f}, median_present={median_present:.0f})")
+
+    if primary_tw != 1.0 and primary_label in task_weights:
+        task_weights[primary_label] = float(task_weights[primary_label]) * float(primary_tw)
+
+    if tw != "equal" or primary_tw != 1.0:
+        sample_keys = list(task_weights.keys())[:6]
+        sample_s = ", ".join([f"{t}={float(task_weights[t]):.2f}" for t in sample_keys])
+        print(
+            f"Task weighting: {tw}, primary_task_weight={float(primary_tw):.3f} "
+            f"(mean-normalized; sample: {sample_s})"
+        )
+
     focus_raw = _parse_csv_arg(args.focus_labels)
     focus_labels = [lab for lab in focus_raw if lab in label_cols]
     dropped_focus = [lab for lab in focus_raw if lab not in label_cols]
@@ -1316,6 +1399,7 @@ def main() -> None:
     # --- Datasets/loaders (active tasks only) ---
     n_workers = int(args.num_workers)
     gen = torch.Generator()
+    gen.manual_seed(int(args.seed))
     train_dataset = XRayMultiTaskDataset(
         train_metadata[["fileID"] + label_cols],
         root_folder,
@@ -1349,7 +1433,9 @@ def main() -> None:
     )
     if str(args.train_sampler) == "primary_balanced":
         mapping = task_value_maps.get(primary_label, {})
-        s = train_metadata[primary_label]
+        # Important: compute weights AFTER filtering missing images (train_dataset.img_labels),
+        # otherwise len(weights) can differ from len(train_dataset).
+        s = train_dataset.img_labels[primary_label]
         miss = _missing_mask(s)
         pos_n = 0
         neg_n = 0
@@ -1368,12 +1454,23 @@ def main() -> None:
                 pos_n += 1
             else:
                 neg_n += 1
-        pos_w = (neg_n / max(1, pos_n)) if (pos_n + neg_n) > 0 else 1.0
+        raw_pos_w = (neg_n / max(1, pos_n)) if (pos_n + neg_n) > 0 else 1.0
+        cap = float(args.primary_balanced_max_pos_weight)
+        pos_w = min(raw_pos_w, cap) if cap > 0 else raw_pos_w
         weights = [pos_w if y == 1 else 1.0 for y in labels_for_weight]
         # Missing/unknown labels get neutral weight.
         weights = [1.0 if y is None else w for y, w in zip(labels_for_weight, weights)]
-        sampler = WeightedRandomSampler(weights=weights, num_samples=len(weights), replacement=True)
-        print(f"Train sampler: primary_balanced ({primary_label}) pos={pos_n} neg={neg_n} pos_weight={pos_w:.4f}")
+        try:
+            sampler = WeightedRandomSampler(weights=weights, num_samples=len(weights), replacement=True, generator=gen)
+        except TypeError:
+            sampler = WeightedRandomSampler(weights=weights, num_samples=len(weights), replacement=True)
+        if raw_pos_w != pos_w:
+            print(
+                f"Train sampler: primary_balanced ({primary_label}) pos={pos_n} neg={neg_n} "
+                f"pos_weight={raw_pos_w:.4f} (capped to {pos_w:.4f})"
+            )
+        else:
+            print(f"Train sampler: primary_balanced ({primary_label}) pos={pos_n} neg={neg_n} pos_weight={pos_w:.4f}")
         train_loader = DataLoader(train_dataset, sampler=sampler, **loader_kwargs)
     else:
         train_loader = DataLoader(train_dataset, sampler=RandomSampler(train_dataset, generator=gen), **loader_kwargs)
@@ -1435,6 +1532,9 @@ def main() -> None:
                 "bce_only": True,
                 "primary_label": primary_label,
                 "train_sampler": str(args.train_sampler),
+                "primary_balanced_max_pos_weight": float(args.primary_balanced_max_pos_weight),
+                "task_weighting": str(args.task_weighting),
+                "primary_task_weight": float(args.primary_task_weight),
                 "min_pos_backbone": int(args.min_pos_backbone),
                 "min_neg_backbone": int(args.min_neg_backbone),
                 "head_only_loss_weight": float(args.head_only_loss_weight),
@@ -1480,6 +1580,7 @@ def main() -> None:
             max_steps=args.max_train_steps,
             backbone_tasks=backbone_tasks,
             head_only_loss_weight=float(args.head_only_loss_weight),
+            task_weights=task_weights,
         )
         log_multitask_metrics(
             train_results,
@@ -1508,6 +1609,7 @@ def main() -> None:
                 max_steps=None,
                 backbone_tasks=backbone_tasks,
                 head_only_loss_weight=float(args.head_only_loss_weight),
+                task_weights=task_weights,
             )
             eval_metrics = log_multitask_metrics(
                 eval_results,
@@ -1552,6 +1654,7 @@ def main() -> None:
                 max_steps=None,
                 backbone_tasks=backbone_tasks,
                 head_only_loss_weight=float(args.head_only_loss_weight),
+                task_weights=task_weights,
             )
             log_multitask_metrics(
                 test_results,
@@ -1620,6 +1723,7 @@ def main() -> None:
         max_steps=None,
         backbone_tasks=backbone_tasks,
         head_only_loss_weight=float(args.head_only_loss_weight),
+        task_weights=task_weights,
     )
     final_metrics = log_multitask_metrics(
         final_results,
@@ -1676,6 +1780,7 @@ def main() -> None:
                 max_steps=None,
                 backbone_tasks=backbone_tasks,
                 head_only_loss_weight=float(args.head_only_loss_weight),
+                task_weights=task_weights,
             )
             best_metrics = log_multitask_metrics(
                 best_results,
