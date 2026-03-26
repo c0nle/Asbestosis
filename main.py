@@ -558,7 +558,6 @@ def run_epoch(
                 y_prob_by_task.setdefault(task, []).append(probs.detach().cpu().view(-1))
                 y_mask_by_task.setdefault(task, []).append(masks[task].detach().cpu().view(-1))
 
-        _wandb_log({f"loss/{suffix}": float(loss.item())}, commit=False)
         epoch_loss += float(loss.item())
         n_steps += 1
 
@@ -600,8 +599,9 @@ def log_multitask_metrics(
     per_task_acc = []
 
     def _should_log_task_metrics() -> bool:
-        if wandb_detail == "full":
-            return True
+        # Keep W&B clean: only log rich artifacts like confusion matrices in full mode.
+        if wandb_detail != "full":
+            return False
         return suffix in {"eval", "final_test", "best_test"}
 
     for task, data in results_by_task.items():
@@ -717,12 +717,27 @@ def log_multitask_metrics(
     metrics_all[f"macro_auc/{suffix}"] = float(np.nanmean(per_task_auc)) if per_task_auc else float("nan")
     metrics_all[f"macro_pr_auc/{suffix}"] = float(np.nanmean(per_task_pr_auc)) if per_task_pr_auc else float("nan")
 
-    _wandb_log(metrics_all)
+    if str(wandb_detail) == "full":
+        wandb_metrics = dict(metrics_all)
+    else:
+        # Compact mode: only log the key ranking metrics per task for overview.
+        wandb_metrics = {
+            f"epoch/{suffix}": epoch,
+            f"average_loss/{suffix}": float(avg_loss),
+            f"macro_auc/{suffix}": metrics_all.get(f"macro_auc/{suffix}", float("nan")),
+            f"macro_pr_auc/{suffix}": metrics_all.get(f"macro_pr_auc/{suffix}", float("nan")),
+        }
+        for task in results_by_task.keys():
+            k_auc = f"task/{task}/auc/{suffix}"
+            k_pr = f"task/{task}/pr_auc/{suffix}"
+            if k_auc in metrics_all:
+                wandb_metrics[k_auc] = metrics_all[k_auc]
+            if k_pr in metrics_all:
+                wandb_metrics[k_pr] = metrics_all[k_pr]
+    _wandb_log(wandb_metrics)
     print(
         f"{suffix} macro: "
         f"loss={metrics_all.get(f'average_loss/{suffix}', float('nan')):.4f} "
-        f"macro_acc={metrics_all.get(f'macro_accuracy/{suffix}', float('nan')):.3f} "
-        f"macro_f1={metrics_all.get(f'macro_f1/{suffix}', float('nan')):.3f} "
         f"macro_auc={metrics_all.get(f'macro_auc/{suffix}', float('nan')):.3f} "
         f"macro_pr_auc={metrics_all.get(f'macro_pr_auc/{suffix}', float('nan')):.3f}"
     )
@@ -746,13 +761,9 @@ def _print_focus_line(metrics: dict, suffix: str, epoch: int, focus_labels: List
     for lab in focus_labels:
         auc = metrics.get(f"task/{lab}/auc/{suffix}")
         pr_auc = metrics.get(f"task/{lab}/pr_auc/{suffix}")
-        rec = metrics.get(f"task/{lab}/recall/{suffix}")
-        f1 = metrics.get(f"task/{lab}/f1/{suffix}")
         auc_s = f"{float(auc):.3f}" if auc is not None and np.isfinite(auc) else "nan"
         pr_auc_s = f"{float(pr_auc):.3f}" if pr_auc is not None and np.isfinite(pr_auc) else "nan"
-        rec_s = f"{float(rec):.3f}" if rec is not None and np.isfinite(rec) else "nan"
-        f1_s = f"{float(f1):.3f}" if f1 is not None and np.isfinite(f1) else "nan"
-        parts.append(f"{lab} auc={auc_s} pr_auc={pr_auc_s} rec={rec_s} f1={f1_s}")
+        parts.append(f"{lab} auc={auc_s} pr_auc={pr_auc_s}")
     print(f"{suffix} focus (epoch {epoch}): " + " | ".join(parts))
 
 
@@ -803,7 +814,7 @@ def _choose_group_col(metadata: pd.DataFrame, requested: Optional[str], n_folds:
 
 def _print_focus_confusions(
     results_by_task: dict,
-    thresholds: Dict[str, float],
+    thresholds: Optional[Dict[str, Optional[float]]],
     suffix: str,
     epoch: int,
     focus_labels: List[str],
@@ -824,7 +835,8 @@ def _print_focus_confusions(
         scores = y_prob.reshape(-1)[y_mask]
         if np.unique(y_true).size < 2:
             continue
-        thr = float(thresholds.get(task, 0.5) if thresholds else 0.5)
+        thr_raw = thresholds.get(task) if thresholds else None
+        thr = 0.5 if thr_raw is None else float(thr_raw)
         y_pred = (scores >= thr).astype(int)
         cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
         tn, fp, fn, tp = (int(cm[0, 0]), int(cm[0, 1]), int(cm[1, 0]), int(cm[1, 1]))
@@ -996,8 +1008,13 @@ def main() -> None:
     )
     parser.add_argument(
         "--group-splits-by",
-        default="auto",
+        default="Untersuchungsnummer",
         help="Column used to group samples when generating splits (prevents patient leakage). Use 'none' to disable override.",
+    )
+    parser.add_argument(
+        "--regenerate-splits",
+        action="store_true",
+        help="Force regeneration of the stratified folds CSV even if it already exists in --fold-folder.",
     )
     parser.add_argument(
         "--leakage-action",
@@ -1125,10 +1142,11 @@ def main() -> None:
         metadata = pd.read_csv(fold_splitted_metadata_filename)
         fold_cols = [c for c in (f"Fold{i}" for i in range(n_folds)) if c in metadata.columns]
         has_val = any((metadata[c] == "val").any() for c in fold_cols)
-        if has_val:
+        if has_val and not bool(args.regenerate_splits):
             needs_splits = False
         else:
-            print(f"Split file has no 'val' split -> regenerating: {fold_splitted_metadata_filename}")
+            reason = "forced by --regenerate-splits" if bool(args.regenerate_splits) else "no 'val' split"
+            print(f"Regenerating split file ({reason}): {fold_splitted_metadata_filename}")
 
     if needs_splits:
         if os.path.isfile(metadata_file):
