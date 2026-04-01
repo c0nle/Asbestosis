@@ -29,7 +29,18 @@ from sklearn.metrics import (
 from torch import nn, optim
 from torch.amp import GradScaler
 from torch.utils.data import DataLoader, Dataset, RandomSampler, SequentialSampler, WeightedRandomSampler
-from torchvision.models import ViT_B_16_Weights, vit_b_16
+from torchvision.models import (
+    EfficientNet_B0_Weights,
+    MobileNet_V3_Large_Weights,
+    MobileNet_V3_Small_Weights,
+    ResNet18_Weights,
+    ViT_B_16_Weights,
+    efficientnet_b0,
+    mobilenet_v3_large,
+    mobilenet_v3_small,
+    resnet18,
+    vit_b_16,
+)
 from torchvision.transforms.v2 import (
     ColorJitter,
     Compose,
@@ -430,6 +441,8 @@ class MultiTaskModel(nn.Module):
 
     def forward(self, x):
         feats = self.backbone(x)
+        if isinstance(feats, torch.Tensor) and feats.ndim > 2:
+            feats = torch.flatten(feats, 1)
         return {name: head(feats).view(-1) for name, head in self.heads.items()}
 
 
@@ -462,6 +475,116 @@ def _build_vit_multitask(task_names: List[str], no_pretrained: bool, head_dropou
     head_in_features = base.hidden_dim
     base.heads = nn.Identity()
     return MultiTaskModel(base, head_in_features=head_in_features, task_names=task_names, head_dropout=head_dropout)
+
+
+def _replace_first_conv_in_channels(module: nn.Module, in_channels: int = 1) -> bool:
+    """
+    Replace the first nn.Conv2d found in a module tree to accept `in_channels`.
+    Copies weights by averaging across the original input channels where possible.
+    Returns True if a conv was replaced.
+    """
+
+    def _try_replace(parent: nn.Module, name: str, conv: nn.Conv2d) -> bool:
+        if conv.in_channels == in_channels:
+            return True
+        new = nn.Conv2d(
+            in_channels,
+            conv.out_channels,
+            kernel_size=conv.kernel_size,
+            stride=conv.stride,
+            padding=conv.padding,
+            dilation=conv.dilation,
+            groups=conv.groups,
+            bias=(conv.bias is not None),
+            padding_mode=conv.padding_mode,
+        )
+        with torch.no_grad():
+            if conv.weight.ndim == 4 and conv.weight.shape[1] >= 1 and new.weight.shape[1] == 1:
+                new.weight.copy_(conv.weight.mean(dim=1, keepdim=True))
+            else:
+                # Fallback: keep random init if shapes are unexpected.
+                pass
+            if conv.bias is not None and new.bias is not None:
+                new.bias.copy_(conv.bias)
+        setattr(parent, name, new)
+        return True
+
+    for name, child in module.named_children():
+        if isinstance(child, nn.Conv2d):
+            return _try_replace(module, name, child)
+        if _replace_first_conv_in_channels(child, in_channels=in_channels):
+            return True
+    return False
+
+
+def _build_cnn_backbone(model_name: str, no_pretrained: bool) -> Tuple[nn.Module, int]:
+    name = str(model_name).strip().lower()
+    if name == "resnet18":
+        weights = None if no_pretrained else ResNet18_Weights.DEFAULT
+        try:
+            base = resnet18(weights=weights)
+        except Exception as e:
+            print(f"Warning: failed to load pretrained weights ({e}); falling back to random init.")
+            base = resnet18(weights=None)
+        in_features = int(base.fc.in_features)
+        base.fc = nn.Identity()
+        _replace_first_conv_in_channels(base, in_channels=1)
+        return base, in_features
+
+    if name == "efficientnet_b0":
+        weights = None if no_pretrained else EfficientNet_B0_Weights.DEFAULT
+        try:
+            base = efficientnet_b0(weights=weights)
+        except Exception as e:
+            print(f"Warning: failed to load pretrained weights ({e}); falling back to random init.")
+            base = efficientnet_b0(weights=None)
+        try:
+            in_features = int(base.classifier[-1].in_features)
+        except Exception:
+            in_features = 1280
+        base.classifier = nn.Identity()
+        _replace_first_conv_in_channels(base, in_channels=1)
+        return base, in_features
+
+    if name == "mobilenet_v3_small":
+        weights = None if no_pretrained else MobileNet_V3_Small_Weights.DEFAULT
+        try:
+            base = mobilenet_v3_small(weights=weights)
+        except Exception as e:
+            print(f"Warning: failed to load pretrained weights ({e}); falling back to random init.")
+            base = mobilenet_v3_small(weights=None)
+        try:
+            in_features = int(base.classifier[-1].in_features)
+        except Exception:
+            in_features = 576
+        base.classifier = nn.Identity()
+        _replace_first_conv_in_channels(base, in_channels=1)
+        return base, in_features
+
+    if name == "mobilenet_v3_large":
+        weights = None if no_pretrained else MobileNet_V3_Large_Weights.DEFAULT
+        try:
+            base = mobilenet_v3_large(weights=weights)
+        except Exception as e:
+            print(f"Warning: failed to load pretrained weights ({e}); falling back to random init.")
+            base = mobilenet_v3_large(weights=None)
+        try:
+            in_features = int(base.classifier[-1].in_features)
+        except Exception:
+            in_features = 960
+        base.classifier = nn.Identity()
+        _replace_first_conv_in_channels(base, in_channels=1)
+        return base, in_features
+
+    raise SystemExit(f"Unknown model '{model_name}'. Choose from vit_b_16, resnet18, efficientnet_b0, mobilenet_v3_small, mobilenet_v3_large.")
+
+
+def _build_multitask_model(model_name: str, task_names: List[str], no_pretrained: bool, head_dropout: float) -> MultiTaskModel:
+    name = str(model_name).strip().lower()
+    if name == "vit_b_16":
+        return _build_vit_multitask(task_names, no_pretrained=no_pretrained, head_dropout=head_dropout)
+    backbone, head_in_features = _build_cnn_backbone(name, no_pretrained=no_pretrained)
+    return MultiTaskModel(backbone, head_in_features=head_in_features, task_names=task_names, head_dropout=head_dropout)
 
 
 def _split_head_backbone_params(model: MultiTaskModel):
@@ -928,6 +1051,12 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=40)
     parser.add_argument("--batch-size", type=int, default=24)
     parser.add_argument("--learning-rate", type=float, default=1e-4)
+    parser.add_argument(
+        "--model",
+        choices=["vit_b_16", "resnet18", "efficientnet_b0", "mobilenet_v3_small", "mobilenet_v3_large"],
+        default="vit_b_16",
+        help="Backbone architecture. For small datasets, CNNs (resnet18/efficientnet/mobilenet) often overfit less than ViT.",
+    )
     parser.add_argument("--max-train-steps", type=int, default=None)
     parser.add_argument("--max-eval-steps", type=int, default=None)
     parser.add_argument("--eval-every", type=int, default=1, help="Run eval every N epochs (set 0 to disable periodic eval).")
@@ -1500,7 +1629,13 @@ def main() -> None:
     val_loader = DataLoader(val_dataset, sampler=SequentialSampler(val_dataset), **loader_kwargs)
     test_loader = DataLoader(test_dataset, sampler=SequentialSampler(test_dataset), **loader_kwargs)
 
-    model = _build_vit_multitask(label_cols, no_pretrained=bool(args.no_pretrained), head_dropout=float(args.head_dropout))
+    model_name = str(args.model)
+    model = _build_multitask_model(
+        model_name,
+        label_cols,
+        no_pretrained=bool(args.no_pretrained),
+        head_dropout=float(args.head_dropout),
+    )
     model = model.to(device)
 
     if args.freeze_backbone_epochs > 0:
@@ -1575,7 +1710,7 @@ def main() -> None:
 
     best_score = None
     best_epoch = -1
-    best_path = os.path.join(output_folder, f"best_vit_labels=multitask_fold={fold}.pth")
+    best_path = os.path.join(output_folder, f"best_{model_name}_labels=multitask_fold={fold}.pth")
     no_improve = 0
     best_fixed_thresholds = None
 
@@ -1830,7 +1965,10 @@ def main() -> None:
 
     torch.save(
         model.state_dict(),
-        os.path.join(output_folder, f"asbestosis_vit_n{int(args.epochs)}_b{int(args.batch_size)}_labels=multitask_fold={fold}.pth"),
+        os.path.join(
+            output_folder,
+            f"asbestosis_{model_name}_n{int(args.epochs)}_b{int(args.batch_size)}_labels=multitask_fold={fold}.pth",
+        ),
     )
     if _wandb_is_active():
         wandb.finish()

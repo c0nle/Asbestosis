@@ -25,6 +25,8 @@ OUT_DIR="${ASBESTOSIS_OUT_DIR:-${PROJECT_DIR}/logs}"
 
 # Model/data options
 SPLIT_LABEL="${ASBESTOSIS_SPLIT_LABEL:-mixed_shapes}"
+# Backbone architecture (choose: vit_b_16, resnet18, efficientnet_b0, mobilenet_v3_small, mobilenet_v3_large)
+MODEL="${ASBESTOSIS_MODEL:-vit_b_16}"
 # Default label set: focus on well-supported tasks (rare/unstable tasks can be enabled via ASBESTOSIS_LABELS).
 DEFAULT_LABELS="mixed_shapes,diffuse_pleural_location,local_pleural_location,pleural_calcification_location,occupational_disease"
 # Train a subset of labels by setting ASBESTOSIS_LABELS; default is the stable label set.
@@ -107,6 +109,7 @@ ARGS=(
   "--fold-folder" "${FOLD_DIR}"
   "--output-folder" "${OUT_DIR}"
   "--split-label" "${SPLIT_LABEL}"
+  "--model" "${MODEL}"
   "--labels" "${LABELS}"
   "--primary-label" "${PRIMARY_LABEL}"
   "--image-size" "${IMAGE_SIZE}"
