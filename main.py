@@ -724,16 +724,20 @@ def log_multitask_metrics(
         wandb_metrics = {
             f"epoch/{suffix}": epoch,
             f"average_loss/{suffix}": float(avg_loss),
+            f"macro_f1/{suffix}": metrics_all.get(f"macro_f1/{suffix}", float("nan")),
             f"macro_auc/{suffix}": metrics_all.get(f"macro_auc/{suffix}", float("nan")),
             f"macro_pr_auc/{suffix}": metrics_all.get(f"macro_pr_auc/{suffix}", float("nan")),
         }
         for task in results_by_task.keys():
             k_auc = f"task/{task}/auc/{suffix}"
             k_pr = f"task/{task}/pr_auc/{suffix}"
+            k_f1 = f"task/{task}/f1/{suffix}"
             if k_auc in metrics_all:
                 wandb_metrics[k_auc] = metrics_all[k_auc]
             if k_pr in metrics_all:
                 wandb_metrics[k_pr] = metrics_all[k_pr]
+            if k_f1 in metrics_all:
+                wandb_metrics[k_f1] = metrics_all[k_f1]
     _wandb_log(wandb_metrics)
     print(
         f"{suffix} macro: "
