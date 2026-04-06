@@ -4,7 +4,7 @@
 #SBATCH --output=logs/%x_%j.out
 #SBATCH --error=logs/%x_%j.err
 #SBATCH --partition c23g
-#SBATCH --time=04:00:00
+#SBATCH --time=06:00:00
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=24
 #SBATCH --mem=32G
@@ -26,9 +26,18 @@ OUT_DIR="${ASBESTOSIS_OUT_DIR:-${PROJECT_DIR}/logs}"
 # Model/data options
 SPLIT_LABEL="${ASBESTOSIS_SPLIT_LABEL:-mixed_shapes}"
 # Backbone architecture (choose: vit_b_16, resnet18, efficientnet_b0, mobilenet_v3_small, mobilenet_v3_large)
-MODEL="${ASBESTOSIS_MODEL:-resnet18}"
-# Default label set: focus on well-supported tasks (rare/unstable tasks can be enabled via ASBESTOSIS_LABELS).
-DEFAULT_LABELS="mixed_shapes,diffuse_pleural_location,local_pleural_location,pleural_calcification_location,occupational_disease"
+# efficientnet_b0 is recommended for this dataset size (~1k samples): fewer params than ViT,
+# better ImageNet features than resnet18, and less prone to overfitting.
+MODEL="${ASBESTOSIS_MODEL:-efficientnet_b0}"
+# Default label set:
+#   mixed_shapes                        — parenchymale Veränderungen (Hauptziel)
+#   diffuse_pleural_thickening_presence — Hat der Patient diffuse Pleuraverdickung? (35% pos, neu)
+#   occupational_disease                — Berufskrankheit anerkannt (7% pos)
+#
+# Removed: local_pleural_location, pleural_calcification_location (< 75 Positive gesamt,
+#   encodieren nur die Lokalisation innerhalb bereits positiver Fälle — nicht lernbar),
+#   diffuse_pleural_location (88% positive, kein echtes Lernsignal).
+DEFAULT_LABELS="mixed_shapes,diffuse_pleural_thickening_presence,occupational_disease"
 # Train a subset of labels by setting ASBESTOSIS_LABELS; default is the stable label set.
 LABELS="${ASBESTOSIS_LABELS:-${DEFAULT_LABELS}}"
 PRIMARY_LABEL="${ASBESTOSIS_PRIMARY_LABEL:-mixed_shapes}"
@@ -39,18 +48,20 @@ if [[ -z "${ASBESTOSIS_EPOCHS+x}" ]]; then
   if [[ "${MODEL}" == "vit_b_16" ]]; then
     EPOCHS="40"
   else
-    EPOCHS="20"
+    EPOCHS="40"
   fi
 else
   EPOCHS="${ASBESTOSIS_EPOCHS}"
 fi
-BATCH_SIZE="${ASBESTOSIS_BATCH_SIZE:-16}"
+BATCH_SIZE="${ASBESTOSIS_BATCH_SIZE:-32}"
 # Use model-dependent defaults unless explicitly overridden via env vars.
+# ResNet18/EfficientNet: lower LR than before (1e-3→3e-4) to reduce overfitting
+# after backbone unfreeze. Backbone gets LR*backbone_lr_mult = 3e-5.
 if [[ -z "${ASBESTOSIS_LR+x}" ]]; then
   if [[ "${MODEL}" == "vit_b_16" ]]; then
     LR="3e-5"
   else
-    LR="1e-3"
+    LR="3e-4"
   fi
 else
   LR="${ASBESTOSIS_LR}"
@@ -80,34 +91,31 @@ if [[ -z "${ASBESTOSIS_WEIGHT_DECAY+x}" ]]; then
 else
   WEIGHT_DECAY="${ASBESTOSIS_WEIGHT_DECAY}"
 fi
-if [[ -z "${ASBESTOSIS_FREEZE_BACKBONE_EPOCHS+x}" ]]; then
-  if [[ "${MODEL}" == "vit_b_16" ]]; then
-    FREEZE_BACKBONE_EPOCHS="10"
-  else
-    FREEZE_BACKBONE_EPOCHS="10"
-  fi
-else
-  FREEZE_BACKBONE_EPOCHS="${ASBESTOSIS_FREEZE_BACKBONE_EPOCHS}"
-fi
+# Freeze only briefly: 5 epochs to warm up the heads, then unfreeze for the remaining 35.
+# 10/20 was too long — half the budget was spent with a frozen backbone.
+FREEZE_BACKBONE_EPOCHS="${ASBESTOSIS_FREEZE_BACKBONE_EPOCHS:-5}"
 if [[ -z "${ASBESTOSIS_EARLY_STOP_PATIENCE+x}" ]]; then
-  EARLY_STOP_PATIENCE="5"
+  EARLY_STOP_PATIENCE="10"
 else
   EARLY_STOP_PATIENCE="${ASBESTOSIS_EARLY_STOP_PATIENCE}"
 fi
-EARLY_STOP_METRIC="${ASBESTOSIS_EARLY_STOP_METRIC:-primary_pr_auc/eval}"
+EARLY_STOP_METRIC="${ASBESTOSIS_EARLY_STOP_METRIC:-macro_auc/eval}"
 EARLY_STOP_MIN_DELTA="${ASBESTOSIS_EARLY_STOP_MIN_DELTA:-0.0}"
 BACKBONE_LR_MULT="${ASBESTOSIS_BACKBONE_LR_MULT:-0.1}"
 MIN_POS_BACKBONE="${ASBESTOSIS_MIN_POS_BACKBONE:-20}"
 MIN_NEG_BACKBONE="${ASBESTOSIS_MIN_NEG_BACKBONE:-20}"
 HEAD_ONLY_LOSS_WEIGHT="${ASBESTOSIS_HEAD_ONLY_LOSS_WEIGHT:-0.25}"
+MAX_POS_WEIGHT="${ASBESTOSIS_MAX_POS_WEIGHT:-10.0}"
+GRAD_CLIP="${ASBESTOSIS_GRAD_CLIP:-1.0}"
+LABEL_SMOOTHING="${ASBESTOSIS_LABEL_SMOOTHING:-0.0}"
 TRAIN_SAMPLER="${ASBESTOSIS_TRAIN_SAMPLER:-primary_balanced}"
 PRIMARY_BAL_MAX_POS_WEIGHT="${ASBESTOSIS_PRIMARY_BAL_MAX_POS_WEIGHT:-10}"
 TASK_WEIGHTING="${ASBESTOSIS_TASK_WEIGHTING:-equal}"
 PRIMARY_TASK_WEIGHT="${ASBESTOSIS_PRIMARY_TASK_WEIGHT:-0}"
 THRESHOLD_STRATEGY="${ASBESTOSIS_THRESHOLD_STRATEGY:-recall_at_precision}"
 FBETA="${ASBESTOSIS_FBETA:-2.0}"
-TARGET_PRECISION="${ASBESTOSIS_TARGET_PRECISION:-0.5}"
-GROUP_SPLITS_BY="${ASBESTOSIS_GROUP_SPLITS_BY:-Untersuchungsnummer}"
+TARGET_PRECISION="${ASBESTOSIS_TARGET_PRECISION:-0.3}"
+GROUP_SPLITS_BY="${ASBESTOSIS_GROUP_SPLITS_BY:-patientID}"
 LEAKAGE_ACTION="${ASBESTOSIS_LEAKAGE_ACTION:-error}"
 REGENERATE_SPLITS="${ASBESTOSIS_REGENERATE_SPLITS:-0}"
 
@@ -170,6 +178,9 @@ ARGS=(
   "--min-pos-backbone" "${MIN_POS_BACKBONE}"
   "--min-neg-backbone" "${MIN_NEG_BACKBONE}"
   "--head-only-loss-weight" "${HEAD_ONLY_LOSS_WEIGHT}"
+  "--max-pos-weight" "${MAX_POS_WEIGHT}"
+  "--grad-clip" "${GRAD_CLIP}"
+  "--label-smoothing" "${LABEL_SMOOTHING}"
   "--train-sampler" "${TRAIN_SAMPLER}"
   "--primary-balanced-max-pos-weight" "${PRIMARY_BAL_MAX_POS_WEIGHT}"
   "--task-weighting" "${TASK_WEIGHTING}"
