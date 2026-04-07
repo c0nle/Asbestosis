@@ -162,16 +162,16 @@ def main() -> None:
         default="all",
         help="Comma-separated label columns, or 'all' to train on all label columns (excluding general metadata columns).",
     )
-    parser.add_argument("--epochs", type=int, default=40)
+    parser.add_argument("--epochs", type=int, default=60)
     parser.add_argument("--batch-size", type=int, default=24)
-    parser.add_argument("--learning-rate", type=float, default=1e-4)
+    parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument(
         "--model",
         choices=["vit_b_16", "resnet18", "efficientnet_b0", "densenet121", "chexnet", "mobilenet_v3_small", "mobilenet_v3_large"],
-        default="vit_b_16",
+        default="chexnet",
         help=(
             "Backbone architecture. "
-            "'chexnet' uses DenseNet121 pretrained on 100k+ chest X-rays (torchxrayvision) — "
+            "'chexnet' uses DenseNet121 pretrained on 100k+ chest X-rays — "
             "best choice for this task. 'densenet121' uses ImageNet weights only."
         ),
     )
@@ -196,7 +196,7 @@ def main() -> None:
             "macro_f1/eval",
             "loss/eval",
         ],
-        default="primary_auc/eval",
+        default="macro_auc/eval",
     )
     parser.add_argument("--early-stop-min-delta", type=float, default=0.0)
     parser.add_argument(
@@ -236,7 +236,7 @@ def main() -> None:
     parser.add_argument(
         "--label-smoothing",
         type=float,
-        default=0.05,
+        default=0.0,
         help="Label smoothing epsilon applied to binary targets during training (0 = disabled).",
     )
     parser.add_argument(
@@ -279,8 +279,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--focus-labels",
-        default="mixed_shapes,diffuse_pleural_location,local_pleural_location,pleural_calcification_location,occupational_disease",
-        help="Comma-separated labels to print as a compact focus line each eval epoch (use 'none' to disable).",
+        default="mixed_shapes,occupational_disease",
+        help="Comma-separated labels to print as a compact per-epoch summary line (use 'none' to disable).",
     )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--check-mapping", action="store_true", help="Print diagnostics for metadata<->mapping merge and exit.")
@@ -350,11 +350,9 @@ def main() -> None:
 
     preprocess = Compose(
         [
-            # RandomResizedCrop adds zoom/scale variation; scale=(0.85,1.0) keeps most of the
-            # image in view so clinically relevant regions (lower/upper zones) are preserved.
+            # Scale jitter keeps most of the image in view (lower/upper lung zones preserved).
             RandomResizedCrop(224, scale=(0.85, 1.0)),
-            # Horizontal flip is safe here: the dichotome labels use "lower/upper" and
-            # "diaphragm/chest_wall" location categories, not strict left/right laterality.
+            # Horizontal flip is safe: labels encode presence/severity, not strict laterality.
             RandomHorizontalFlip(p=0.5),
             RandomRotation(10),
             ColorJitter(brightness=0.2, contrast=0.2),
@@ -872,7 +870,6 @@ def main() -> None:
                 "labels":                      label_cols,
                 "fold":                        fold,
                 "metadata":                    metadata_file,
-                "bce_only":                    True,
                 "primary_label":               primary_label,
                 "train_sampler":               str(args.train_sampler),
                 "primary_balanced_max_pos_weight": float(args.primary_balanced_max_pos_weight),

@@ -155,8 +155,8 @@ class _CheXNetBackbone(nn.Module):
         return torch.flatten(out, 1)
 
 
-# Default location for the pre-extracted CheXNet state dict (created once by
-# running `python model.py --extract-chexnet` on a node with torchxrayvision).
+# Pre-extracted CheXNet weights (features only, no torchxrayvision dependency at runtime).
+# Must sit next to model.py. See README for how to generate this file.
 _CHEXNET_STATE_DICT_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "chexnet_features_state_dict.pt",
@@ -196,9 +196,8 @@ def _build_chexnet_multitask(
             "  python model.py --extract-chexnet"
         )
 
-    # Build torchvision DenseNet121 and replace its head with Identity.
     base = densenet121(weights=None)
-    # Replace first conv: CheXNet was trained on 1-channel input.
+    # Replace first conv: CheXNet was trained on single-channel (grayscale) input.
     old_conv = base.features.conv0
     new_conv = nn.Conv2d(
         1, old_conv.out_channels,
@@ -210,9 +209,8 @@ def _build_chexnet_multitask(
     base.features.conv0 = new_conv
     base.classifier = nn.Identity()
 
-    # Load CheXNet weights into the features module only.
+    # Keys in the state dict are "features.*" so we load into base (which has .features).
     sd = torch.load(_CHEXNET_STATE_DICT_PATH, map_location="cpu", weights_only=True)
-    # State dict keys are "features.*" — load directly into base (which has .features)
     missing, unexpected = base.load_state_dict(sd, strict=False)
     feat_missing = [k for k in missing if k.startswith("features.")]
     if feat_missing:
@@ -352,9 +350,8 @@ def _build_multitask_model(
     if name == "vit_b_16":
         return _build_vit_multitask(task_names, no_pretrained=no_pretrained, head_dropout=head_dropout)
     if name == "chexnet":
-        # CheXNet ignores no_pretrained: weights are the entire point of this model.
         if no_pretrained:
-            print("Warning: --no-pretrained has no effect for chexnet (CheXNet weights are always used).")
+            print("Warning: --no-pretrained has no effect for chexnet (CheXNet weights are always loaded).")
         return _build_chexnet_multitask(task_names, head_dropout=head_dropout)
     backbone, head_in_features = _build_cnn_backbone(name, no_pretrained=no_pretrained)
     return MultiTaskModel(backbone, head_in_features=head_in_features, task_names=task_names, head_dropout=head_dropout)
