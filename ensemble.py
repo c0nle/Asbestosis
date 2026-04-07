@@ -272,7 +272,8 @@ def main() -> None:
     )
     parser.add_argument("--head-dropout", type=float, default=0.5)
     parser.add_argument("--batch-size",   type=int,   default=32)
-    parser.add_argument("--num-workers",  type=int,   default=4)
+    parser.add_argument("--num-workers",  type=int,   default=0,
+                        help="DataLoader workers (0 = main process only; use 0 on login nodes).")
     parser.add_argument("--n-folds",      type=int,   default=5)
     parser.add_argument("--seed",         type=int,   default=0)
     parser.add_argument("--n-bootstrap",  type=int,   default=500,

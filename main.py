@@ -175,8 +175,8 @@ def main() -> None:
             "best choice for this task. 'densenet121' uses ImageNet weights only."
         ),
     )
-    parser.add_argument("--max-train-steps", type=int, default=None)
-    parser.add_argument("--max-eval-steps", type=int, default=None)
+    parser.add_argument("--max-train-steps", type=int, default=None,
+                        help="Cap training steps per epoch (useful for quick smoke tests).")
     parser.add_argument("--eval-every", type=int, default=1, help="Run eval every N epochs (set 0 to disable periodic eval).")
     parser.add_argument("--test-every", type=int, default=0, help="Run test every N epochs (set 0 to disable periodic test).")
     parser.add_argument("--num-workers", type=int, default=0)
@@ -1026,10 +1026,14 @@ def main() -> None:
                 torch.save(checkpoint, best_path)
                 print(f"Saved best model to {best_path} (epoch {epoch}, score={best_score:.4f})")
             else:
-                no_improve += 1
-                if no_improve >= int(args.early_stop_patience):
-                    print(f"Early stopping at epoch {epoch} (best epoch {best_epoch}, score={best_score:.4f})")
-                    break
+                # Don't count non-improvement while the backbone is still frozen —
+                # the model hasn't seen its full capacity yet, so plateaus here are
+                # expected and should not trigger early stopping.
+                if epoch >= int(args.freeze_backbone_epochs):
+                    no_improve += 1
+                    if no_improve >= int(args.early_stop_patience):
+                        print(f"Early stopping at epoch {epoch} (best epoch {best_epoch}, score={best_score:.4f})")
+                        break
 
     final_epoch = epoch if int(args.epochs) > 0 else -1
 

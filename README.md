@@ -85,7 +85,12 @@ for fold in 0 1 2 3 4; do
 done
 ```
 
-Wait for all jobs to finish, then run the ensemble evaluation.
+Wait for all jobs to finish (`squeue -u <user>`), then run the ensemble evaluation.
+
+**Note on early stopping and backbone freezing:** early-stop patience only starts
+counting after the backbone unfreeze epoch. During the frozen phase the model
+cannot improve at its full capacity, so plateaus there should not trigger
+stopping.
 
 ## Ensemble Evaluation
 
@@ -132,18 +137,33 @@ Each training run logs to the `Asbestosis` W&B project. Key metrics:
 
 Set `ASBESTOSIS_NO_WANDB=1` to disable W&B logging.
 
-## Results (CheXNet, 5-fold CV, 60 epochs)
+## Results (CheXNet, 5-fold CV, 60 epochs, no SWA)
 
-| Fold | macro_auc | mixed_shapes | occupational_disease |
+### Per-fold — `best_test` AUC (best checkpoint evaluated on held-out test split)
+
+| Fold | macro_auc | mixed_shapes | occupational_disease | Best epoch |
+|---|---|---|---|---|
+| 0 | 0.761 | 0.664 | 0.858 | 57 |
+| 1 | **0.774** | 0.649 | **0.898** | 40 |
+| 2 | 0.763 | 0.638 | 0.889 | 40 |
+| 3 | 0.772 | **0.671** | 0.874 | 57 |
+| 4 | 0.752 | 0.606 | **0.898** | 43 |
+| **Mean ± std** | **0.764 ± 0.008** | **0.646 ± 0.024** | **0.883 ± 0.018** | — |
+
+### Ensemble — all 5 models, full dataset (n=3 163 / 3 123)
+
+Probabilities from all five fold-models are averaged before computing metrics.
+
+| | mixed_shapes | occupational_disease | macro |
 |---|---|---|---|
-| 0 | 0.760 | 0.662 | 0.857 |
-| 1 | 0.771 | 0.644 | 0.898 |
-| 2 | 0.751 | 0.617 | 0.885 |
-| 3 | 0.761 | 0.656 | 0.867 |
-| 4 | 0.747 | 0.601 | 0.893 |
-| **Mean ± std** | **0.758 ± 0.008** | **0.636 ± 0.025** | **0.880 ± 0.016** |
+| **Ensemble AUC** | 0.659 | **0.901** | **0.780** |
+| **95% CI (bootstrap n=500)** | [0.638, 0.679] | [0.881, 0.919] | — |
+| **Single-model AUC** | 0.639 | 0.878 | 0.758 |
+| **Ensemble gain Δ** | +0.020 | +0.023 | **+0.022** |
 
-Ensemble results are in the `ensemble_chexnet_5folds` W&B run.
+The ensemble brings a consistent +0.022 macro AUC gain over single-fold models.
+Full ROC/PR curves and the bootstrap AUC histogram are logged in the
+`ensemble_chexnet_5folds` W&B run.
 
 ## Data
 

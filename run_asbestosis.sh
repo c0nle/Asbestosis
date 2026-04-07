@@ -138,7 +138,6 @@ LABEL_STATS="${ASBESTOSIS_LABEL_STATS:-0}"
 SEED="${ASBESTOSIS_SEED:-0}"
 
 MAX_TRAIN_STEPS="${ASBESTOSIS_MAX_TRAIN_STEPS:-}"
-MAX_EVAL_STEPS="${ASBESTOSIS_MAX_EVAL_STEPS:-}"
 
 # ---------------------------------------------------------------------------
 # Environment setup
@@ -210,7 +209,6 @@ ARGS=(
 
 [[ -n "${FOCUS_LABELS}" ]]    && ARGS+=("--focus-labels"    "${FOCUS_LABELS}")
 [[ -n "${MAX_TRAIN_STEPS}" ]] && ARGS+=("--max-train-steps" "${MAX_TRAIN_STEPS}")
-[[ -n "${MAX_EVAL_STEPS}" ]]  && ARGS+=("--max-eval-steps"  "${MAX_EVAL_STEPS}")
 [[ "${NO_PRETRAINED}"    == "1" ]] && ARGS+=("--no-pretrained")
 [[ "${NO_WANDB}"         == "1" ]] && ARGS+=("--no-wandb")
 [[ "${CHECK_MAPPING}"    == "1" ]] && ARGS+=("--check-mapping")

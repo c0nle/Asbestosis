@@ -15,7 +15,6 @@ _filter_rows_with_images
 """
 
 import functools
-import gc
 import glob
 import io
 import os

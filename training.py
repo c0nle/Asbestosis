@@ -77,6 +77,9 @@ def run_epoch(
                               backbone.  ``None`` means all tasks do.
         head_only_loss_weight: Loss multiplier for head-only tasks.
         task_weights:         Optional per-task loss multiplier dict.
+        grad_clip:            Max gradient norm for clipping (0 = disabled).
+        label_smoothing:      Epsilon for binary label smoothing during training
+                              (0 = disabled).  Applied before loss computation.
 
     Returns:
         Tuple of:
