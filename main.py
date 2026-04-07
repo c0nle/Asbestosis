@@ -32,6 +32,7 @@ import torch
 import wandb
 from torch import nn, optim
 from torch.amp import GradScaler
+from torch.optim.swa_utils import AveragedModel, update_bn
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler, WeightedRandomSampler
 from torchvision.transforms.v2 import (
     ColorJitter,
@@ -166,9 +167,13 @@ def main() -> None:
     parser.add_argument("--learning-rate", type=float, default=1e-4)
     parser.add_argument(
         "--model",
-        choices=["vit_b_16", "resnet18", "efficientnet_b0", "mobilenet_v3_small", "mobilenet_v3_large"],
+        choices=["vit_b_16", "resnet18", "efficientnet_b0", "densenet121", "chexnet", "mobilenet_v3_small", "mobilenet_v3_large"],
         default="vit_b_16",
-        help="Backbone architecture. For small datasets, CNNs (resnet18/efficientnet/mobilenet) often overfit less than ViT.",
+        help=(
+            "Backbone architecture. "
+            "'chexnet' uses DenseNet121 pretrained on 100k+ chest X-rays (torchxrayvision) — "
+            "best choice for this task. 'densenet121' uses ImageNet weights only."
+        ),
     )
     parser.add_argument("--max-train-steps", type=int, default=None)
     parser.add_argument("--max-eval-steps", type=int, default=None)
@@ -233,6 +238,26 @@ def main() -> None:
         type=float,
         default=0.05,
         help="Label smoothing epsilon applied to binary targets during training (0 = disabled).",
+    )
+    parser.add_argument(
+        "--swa-start-epoch",
+        type=int,
+        default=0,
+        help=(
+            "Epoch to start Stochastic Weight Averaging (0 = disabled). "
+            "E.g. 14 to average checkpoints from epoch 14 onward. "
+            "After training, BN stats are updated and the averaged model is "
+            "used for the final_test evaluation."
+        ),
+    )
+    parser.add_argument(
+        "--n-bootstrap",
+        type=int,
+        default=0,
+        help=(
+            "Number of bootstrap resamples for AUC confidence intervals on the test set "
+            "(0 = disabled). Logged as a W&B histogram when active. E.g. 500."
+        ),
     )
     parser.add_argument(
         "--min-pos-backbone",
@@ -314,6 +339,15 @@ def main() -> None:
     except Exception:
         pass
 
+    # CheXNet (torchxrayvision) was trained with pixel values in [-1024, 1024].
+    # After ToDtype(float32, scale=True) images are in [0, 1].
+    # Normalize(mean=0.5, std=1/2048) maps [0,1] → [-1024, 1024] exactly.
+    # All other models use standard [-1, 1] normalization (mean=0.5, std=0.5).
+    if str(args.model) == "chexnet":
+        _norm = Normalize(mean=[0.5], std=[1.0 / 2048.0])
+    else:
+        _norm = Normalize(mean=[0.5], std=[0.5])
+
     preprocess = Compose(
         [
             # RandomResizedCrop adds zoom/scale variation; scale=(0.85,1.0) keeps most of the
@@ -326,7 +360,7 @@ def main() -> None:
             ColorJitter(brightness=0.2, contrast=0.2),
             ToImage(),
             ToDtype(torch.float32, scale=True),
-            Normalize(mean=[0.5], std=[0.5]),
+            _norm,
         ]
     )
     preprocess_no_aug = Compose(
@@ -334,7 +368,7 @@ def main() -> None:
             Resize((224, 224)),
             ToImage(),
             ToDtype(torch.float32, scale=True),
-            Normalize(mean=[0.5], std=[0.5]),
+            _norm,
         ]
     )
 
@@ -866,6 +900,11 @@ def main() -> None:
     no_improve = 0
     best_fixed_thresholds = None
 
+    swa_model = None
+    if int(args.swa_start_epoch) > 0:
+        swa_model = AveragedModel(model)
+        print(f"SWA enabled: averaging model weights from epoch {args.swa_start_epoch} onward")
+
     optimizer    = make_optimizer()
     lr_scheduler = make_scheduler(optimizer, remaining_epochs=int(args.epochs))
 
@@ -887,6 +926,10 @@ def main() -> None:
             grad_clip=float(args.grad_clip),
             label_smoothing=float(args.label_smoothing),
         )
+
+        if swa_model is not None and epoch >= int(args.swa_start_epoch):
+            swa_model.update_parameters(model)
+
         log_multitask_metrics(
             train_results, train_avg_loss, suffix="train", epoch=epoch,
             task_index_to_label=task_index_to_label,
@@ -992,6 +1035,13 @@ def main() -> None:
                     break
 
     final_epoch = epoch if int(args.epochs) > 0 else -1
+
+    if swa_model is not None:
+        print("SWA: updating BatchNorm statistics over training set...")
+        update_bn(train_loader, swa_model, device=device)
+        model.load_state_dict(swa_model.module.state_dict())
+        print("SWA weights applied to model — final_test uses the averaged model.")
+
     final_results, final_avg_loss = run_epoch(
         model, optimizer, None, criterion, scaler,
         test_loader, device, train=False,
@@ -1008,6 +1058,8 @@ def main() -> None:
         threshold_strategy=str(args.threshold_strategy),
         fbeta=float(args.fbeta),
         target_precision=float(args.target_precision),
+        n_bootstrap=int(args.n_bootstrap),
+        log_curves=True,
     )
     _print_focus_line(final_metrics, suffix="final_test", epoch=final_epoch, focus_labels=focus_labels)
     if best_fixed_thresholds:
@@ -1054,6 +1106,8 @@ def main() -> None:
                 threshold_strategy=str(args.threshold_strategy),
                 fbeta=float(args.fbeta),
                 target_precision=float(args.target_precision),
+                n_bootstrap=int(args.n_bootstrap),
+                log_curves=True,
             )
             _print_focus_line(best_metrics, suffix="best_test", epoch=best_ep, focus_labels=focus_labels)
             if best_fixed_thresholds:

@@ -26,6 +26,7 @@ from sklearn.metrics import (
     precision_recall_curve,
     precision_recall_fscore_support,
     roc_auc_score,
+    roc_curve,
 )
 from torch import nn
 from torch.amp import GradScaler
@@ -193,6 +194,8 @@ def log_multitask_metrics(
     threshold_strategy: str = "fbeta",
     fbeta: float = 2.0,
     target_precision: float = 0.5,
+    n_bootstrap: int = 0,
+    log_curves: bool = False,
 ) -> dict:
     """
     Compute and log per-task and macro-averaged classification metrics.
@@ -311,6 +314,88 @@ def log_multitask_metrics(
                         task_metrics[
                             f"task/{task}/best_threshold_recall_at_p{float(target_precision):.2f}/{suffix}"
                         ] = float(pr_thr[best_idx])
+            except Exception:
+                pass
+
+        _is_test_suffix = suffix in {"final_test", "best_test"}
+
+        # --- Bootstrap CI for AUC ---
+        if n_bootstrap > 0 and unique_true.size >= 2 and _is_test_suffix:
+            rng = np.random.default_rng(seed=42)
+            boot_aucs = []
+            n = len(y_true)
+            for _ in range(int(n_bootstrap)):
+                idx = rng.integers(0, n, size=n)
+                yt, ys_ = y_true[idx], scores[idx]
+                if np.unique(yt).size < 2:
+                    continue
+                try:
+                    boot_aucs.append(float(roc_auc_score(yt, ys_)))
+                except Exception:
+                    pass
+            if len(boot_aucs) >= 10:
+                ci_lo = float(np.percentile(boot_aucs, 2.5))
+                ci_hi = float(np.percentile(boot_aucs, 97.5))
+                task_metrics[f"task/{task}/auc_ci_lo/{suffix}"] = ci_lo
+                task_metrics[f"task/{task}/auc_ci_hi/{suffix}"] = ci_hi
+                print(
+                    f"  bootstrap ({len(boot_aucs)} samples) {task}: "
+                    f"auc={float(auc_val):.3f} 95%CI=[{ci_lo:.3f}, {ci_hi:.3f}]"
+                )
+                if _wandb_is_active():
+                    try:
+                        wandb.log(
+                            {f"auc_bootstrap/{suffix}/{task}": wandb.Histogram(np.array(boot_aucs))},
+                            commit=False,
+                        )
+                    except Exception:
+                        pass
+
+        # --- ROC and PR curves ---
+        if log_curves and _wandb_is_active() and unique_true.size >= 2 and _is_test_suffix:
+            try:
+                # ROC curve (downsample to ≤300 points for W&B)
+                fpr, tpr, _ = roc_curve(y_true, scores)
+                step = max(1, len(fpr) // 300)
+                fpr_ds = fpr[::step].tolist()
+                tpr_ds = tpr[::step].tolist()
+                # ensure endpoints
+                if fpr_ds[-1] != 1.0:
+                    fpr_ds.append(1.0); tpr_ds.append(1.0)
+                wandb.log(
+                    {
+                        f"roc_curve/{suffix}/{task}": wandb.plot.line_series(
+                            xs=[fpr_ds, [0.0, 1.0]],
+                            ys=[tpr_ds, [0.0, 1.0]],
+                            keys=["Model", "Random"],
+                            title=f"ROC – {task} ({suffix})",
+                            xname="False Positive Rate",
+                        )
+                    },
+                    commit=False,
+                )
+            except Exception:
+                pass
+
+            try:
+                # PR curve with prevalence baseline
+                pr_prec_c, pr_rec_c, _ = precision_recall_curve(y_true, scores)
+                prevalence = float(y_true.mean())
+                step = max(1, len(pr_rec_c) // 300)
+                rec_ds  = pr_rec_c[::step].tolist()
+                prec_ds = pr_prec_c[::step].tolist()
+                wandb.log(
+                    {
+                        f"pr_curve/{suffix}/{task}": wandb.plot.line_series(
+                            xs=[rec_ds, [0.0, 1.0]],
+                            ys=[prec_ds, [prevalence, prevalence]],
+                            keys=["Model", f"Baseline ({prevalence:.1%})"],
+                            title=f"PR – {task} ({suffix})",
+                            xname="Recall",
+                        )
+                    },
+                    commit=False,
+                )
             except Exception:
                 pass
 

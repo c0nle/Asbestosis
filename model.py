@@ -16,12 +16,15 @@ from typing import Dict, List, Optional, Tuple
 
 import torch
 from torch import nn
+import torch.nn.functional as F
 from torchvision.models import (
+    DenseNet121_Weights,
     EfficientNet_B0_Weights,
     MobileNet_V3_Large_Weights,
     MobileNet_V3_Small_Weights,
     ResNet18_Weights,
     ViT_B_16_Weights,
+    densenet121,
     efficientnet_b0,
     mobilenet_v3_large,
     mobilenet_v3_small,
@@ -130,6 +133,98 @@ def _build_vit_multitask(
 
 
 # ---------------------------------------------------------------------------
+# CheXNet builder (torchxrayvision DenseNet121 pretrained on chest X-rays)
+# ---------------------------------------------------------------------------
+
+class _CheXNetBackbone(nn.Module):
+    """
+    DenseNet121 features module with ReLU + global average pooling → 1024-d vector.
+
+    Wraps the torchvision DenseNet121 ``features`` Sequential so that the
+    output matches the interface expected by :class:`MultiTaskModel`.
+    """
+
+    def __init__(self, features: nn.Module):
+        super().__init__()
+        self.features = features
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        out = self.features(x)
+        out = F.relu(out, inplace=True)
+        out = F.adaptive_avg_pool2d(out, (1, 1))
+        return torch.flatten(out, 1)
+
+
+# Default location for the pre-extracted CheXNet state dict (created once by
+# running `python model.py --extract-chexnet` on a node with torchxrayvision).
+_CHEXNET_STATE_DICT_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "chexnet_features_state_dict.pt",
+)
+
+
+def _build_chexnet_multitask(
+    task_names: List[str],
+    head_dropout: float,
+) -> "MultiTaskModel":
+    """
+    Build a multi-task model with CheXNet-pretrained DenseNet121 backbone.
+
+    Loads a pre-extracted state dict (``chexnet_features_state_dict.pt``) into
+    a standard torchvision DenseNet121 ``features`` module — no torchxrayvision
+    dependency at inference time.  The weights were pretrained on 100k+ chest
+    X-ray images, giving directly relevant features for pleural/parenchymal
+    pathology.
+
+    The first conv layer is adapted to accept 1-channel (grayscale) input,
+    consistent with how the original CheXNet weights were trained.
+
+    Args:
+        task_names:   List of task names for which to create output heads.
+        head_dropout: Dropout probability before each task head.
+
+    Returns:
+        :class:`MultiTaskModel` with a CheXNet backbone (1024-d features).
+
+    Raises:
+        SystemExit: If ``chexnet_features_state_dict.pt`` is not found.
+    """
+    if not os.path.isfile(_CHEXNET_STATE_DICT_PATH):
+        raise SystemExit(
+            f"CheXNet state dict not found: {_CHEXNET_STATE_DICT_PATH}\n"
+            "Re-extract it on a node with torchxrayvision:\n"
+            "  python model.py --extract-chexnet"
+        )
+
+    # Build torchvision DenseNet121 and replace its head with Identity.
+    base = densenet121(weights=None)
+    # Replace first conv: CheXNet was trained on 1-channel input.
+    old_conv = base.features.conv0
+    new_conv = nn.Conv2d(
+        1, old_conv.out_channels,
+        kernel_size=old_conv.kernel_size,
+        stride=old_conv.stride,
+        padding=old_conv.padding,
+        bias=(old_conv.bias is not None),
+    )
+    base.features.conv0 = new_conv
+    base.classifier = nn.Identity()
+
+    # Load CheXNet weights into the features module only.
+    sd = torch.load(_CHEXNET_STATE_DICT_PATH, map_location="cpu", weights_only=True)
+    # State dict keys are "features.*" — load directly into base (which has .features)
+    missing, unexpected = base.load_state_dict(sd, strict=False)
+    feat_missing = [k for k in missing if k.startswith("features.")]
+    if feat_missing:
+        print(f"Warning: {len(feat_missing)} feature keys not loaded: {feat_missing[:3]} …")
+    print(f"CheXNet weights loaded from {_CHEXNET_STATE_DICT_PATH} "
+          f"({len(sd)} keys, {len(missing)} missing, {len(unexpected)} unexpected)")
+
+    backbone = _CheXNetBackbone(base.features)
+    return MultiTaskModel(backbone, head_in_features=1024, task_names=task_names, head_dropout=head_dropout)
+
+
+# ---------------------------------------------------------------------------
 # CNN builders
 # ---------------------------------------------------------------------------
 
@@ -182,6 +277,7 @@ def _replace_first_conv_in_channels(module: nn.Module, in_channels: int = 1) -> 
 _CNN_CONFIGS: Dict[str, tuple] = {
     "resnet18":           (resnet18,           ResNet18_Weights,           512,  "fc"),
     "efficientnet_b0":    (efficientnet_b0,    EfficientNet_B0_Weights,    1280, "classifier"),
+    "densenet121":        (densenet121,         DenseNet121_Weights,        1024, "classifier"),
     "mobilenet_v3_small": (mobilenet_v3_small, MobileNet_V3_Small_Weights, 576,  "classifier"),
     "mobilenet_v3_large": (mobilenet_v3_large, MobileNet_V3_Large_Weights, 960,  "classifier"),
 }
@@ -255,6 +351,11 @@ def _build_multitask_model(
     name = str(model_name).strip().lower()
     if name == "vit_b_16":
         return _build_vit_multitask(task_names, no_pretrained=no_pretrained, head_dropout=head_dropout)
+    if name == "chexnet":
+        # CheXNet ignores no_pretrained: weights are the entire point of this model.
+        if no_pretrained:
+            print("Warning: --no-pretrained has no effect for chexnet (CheXNet weights are always used).")
+        return _build_chexnet_multitask(task_names, head_dropout=head_dropout)
     backbone, head_in_features = _build_cnn_backbone(name, no_pretrained=no_pretrained)
     return MultiTaskModel(backbone, head_in_features=head_in_features, task_names=task_names, head_dropout=head_dropout)
 

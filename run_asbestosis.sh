@@ -25,10 +25,11 @@ OUT_DIR="${ASBESTOSIS_OUT_DIR:-${PROJECT_DIR}/logs}"
 
 # Model/data options
 SPLIT_LABEL="${ASBESTOSIS_SPLIT_LABEL:-mixed_shapes}"
-# Backbone architecture (choose: vit_b_16, resnet18, efficientnet_b0, mobilenet_v3_small, mobilenet_v3_large)
-# efficientnet_b0 is recommended for this dataset size (~1k samples): fewer params than ViT,
-# better ImageNet features than resnet18, and less prone to overfitting.
-MODEL="${ASBESTOSIS_MODEL:-efficientnet_b0}"
+# Backbone architecture (choose: vit_b_16, resnet18, efficientnet_b0, densenet121, chexnet, mobilenet_v3_small, mobilenet_v3_large)
+# chexnet = DenseNet121 pretrained on 100k+ chest X-rays (torchxrayvision).
+# Directly relevant features for pleural/parenchymal pathology → best choice for this task.
+# Requires: pip install torchxrayvision  (run once in the venv before submitting)
+MODEL="${ASBESTOSIS_MODEL:-chexnet}"
 # Default label set:
 #   mixed_shapes                        — parenchymale Veränderungen (Hauptziel)
 #   diffuse_pleural_thickening_presence — Hat der Patient diffuse Pleuraverdickung? (35% pos, neu)
@@ -37,7 +38,7 @@ MODEL="${ASBESTOSIS_MODEL:-efficientnet_b0}"
 # Removed: local_pleural_location, pleural_calcification_location (< 75 Positive gesamt,
 #   encodieren nur die Lokalisation innerhalb bereits positiver Fälle — nicht lernbar),
 #   diffuse_pleural_location (88% positive, kein echtes Lernsignal).
-DEFAULT_LABELS="mixed_shapes,diffuse_pleural_thickening_presence,occupational_disease"
+DEFAULT_LABELS="mixed_shapes,occupational_disease"
 # Train a subset of labels by setting ASBESTOSIS_LABELS; default is the stable label set.
 LABELS="${ASBESTOSIS_LABELS:-${DEFAULT_LABELS}}"
 PRIMARY_LABEL="${ASBESTOSIS_PRIMARY_LABEL:-mixed_shapes}"
@@ -60,6 +61,10 @@ BATCH_SIZE="${ASBESTOSIS_BATCH_SIZE:-32}"
 if [[ -z "${ASBESTOSIS_LR+x}" ]]; then
   if [[ "${MODEL}" == "vit_b_16" ]]; then
     LR="3e-5"
+  elif [[ "${MODEL}" == "chexnet" ]]; then
+    # Same LR as EfficientNet — heads need 3e-4 to converge in 40 epochs.
+    # Backbone is protected by backbone_lr_mult=0.1 → gets 3e-5.
+    LR="3e-4"
   else
     LR="3e-4"
   fi
@@ -91,9 +96,17 @@ if [[ -z "${ASBESTOSIS_WEIGHT_DECAY+x}" ]]; then
 else
   WEIGHT_DECAY="${ASBESTOSIS_WEIGHT_DECAY}"
 fi
-# Freeze only briefly: 5 epochs to warm up the heads, then unfreeze for the remaining 35.
-# 10/20 was too long — half the budget was spent with a frozen backbone.
-FREEZE_BACKBONE_EPOCHS="${ASBESTOSIS_FREEZE_BACKBONE_EPOCHS:-5}"
+# CheXNet: freeze 15 epochs so heads fully converge before backbone is touched.
+# EfficientNet/ResNet: 5 epochs is enough (ImageNet features need more adaptation).
+if [[ -z "${ASBESTOSIS_FREEZE_BACKBONE_EPOCHS+x}" ]]; then
+  if [[ "${MODEL}" == "chexnet" ]]; then
+    FREEZE_BACKBONE_EPOCHS="15"
+  else
+    FREEZE_BACKBONE_EPOCHS="5"
+  fi
+else
+  FREEZE_BACKBONE_EPOCHS="${ASBESTOSIS_FREEZE_BACKBONE_EPOCHS}"
+fi
 if [[ -z "${ASBESTOSIS_EARLY_STOP_PATIENCE+x}" ]]; then
   EARLY_STOP_PATIENCE="10"
 else
@@ -108,6 +121,9 @@ HEAD_ONLY_LOSS_WEIGHT="${ASBESTOSIS_HEAD_ONLY_LOSS_WEIGHT:-0.25}"
 MAX_POS_WEIGHT="${ASBESTOSIS_MAX_POS_WEIGHT:-10.0}"
 GRAD_CLIP="${ASBESTOSIS_GRAD_CLIP:-1.0}"
 LABEL_SMOOTHING="${ASBESTOSIS_LABEL_SMOOTHING:-0.0}"
+# SWA: average model weights from this epoch onward to counteract overfitting
+# (loss rises again at epoch ~16; start SWA at 14 to capture the optimum region)
+SWA_START_EPOCH="${ASBESTOSIS_SWA_START_EPOCH:-14}"
 TRAIN_SAMPLER="${ASBESTOSIS_TRAIN_SAMPLER:-primary_balanced}"
 PRIMARY_BAL_MAX_POS_WEIGHT="${ASBESTOSIS_PRIMARY_BAL_MAX_POS_WEIGHT:-10}"
 TASK_WEIGHTING="${ASBESTOSIS_TASK_WEIGHTING:-equal}"
@@ -118,6 +134,7 @@ TARGET_PRECISION="${ASBESTOSIS_TARGET_PRECISION:-0.3}"
 GROUP_SPLITS_BY="${ASBESTOSIS_GROUP_SPLITS_BY:-patientID}"
 LEAKAGE_ACTION="${ASBESTOSIS_LEAKAGE_ACTION:-error}"
 REGENERATE_SPLITS="${ASBESTOSIS_REGENERATE_SPLITS:-0}"
+N_BOOTSTRAP="${ASBESTOSIS_N_BOOTSTRAP:-500}"
 
 # Feature toggles (set to 1 to enable)
 NO_PRETRAINED="${ASBESTOSIS_NO_PRETRAINED:-0}"
@@ -181,6 +198,8 @@ ARGS=(
   "--max-pos-weight" "${MAX_POS_WEIGHT}"
   "--grad-clip" "${GRAD_CLIP}"
   "--label-smoothing" "${LABEL_SMOOTHING}"
+  "--swa-start-epoch" "${SWA_START_EPOCH}"
+  "--n-bootstrap" "${N_BOOTSTRAP}"
   "--train-sampler" "${TRAIN_SAMPLER}"
   "--primary-balanced-max-pos-weight" "${PRIMARY_BAL_MAX_POS_WEIGHT}"
   "--task-weighting" "${TASK_WEIGHTING}"
