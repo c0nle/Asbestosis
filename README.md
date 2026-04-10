@@ -10,7 +10,7 @@ Two clinically validated labels are trained simultaneously:
 
 | Label | Description | Prevalence |
 |---|---|---|
-| `mixed_shapes` | Parenchymal opacities (rounded + irregular) | ~41% |
+| `mixed_shapes` | Parenchymal opacities (rounded + irregular) | ~26% |
 | `occupational_disease` | Occupational disease recognised | ~7% |
 
 Both labels come from the dichotome metadata CSV. The multi-task setup allows
@@ -99,10 +99,21 @@ split using all available models, and averages predicted probabilities. Reports
 per-task and macro-averaged AUC, and logs ROC/PR curves + bootstrap CI to W&B.
 
 ```bash
+# Recommended: run as a SLURM job (GPU, 8 workers, ~20 min)
+sbatch run_ensemble.sh
+
+# Or interactively on a login node (no GPU, num-workers must be 0)
 source .venv/bin/activate
 python ensemble.py \
     --base-folder /hpcwork/rwth1954/Asbestosis_Data \
     --output-folder /rwthfs/rz/cluster/home/rwth1954/Asbestosis/logs
+```
+
+All parameters in `run_ensemble.sh` can be overridden via environment variables:
+
+```bash
+# Example: disable W&B, use a different model
+sbatch --export=ALL,ASBESTOSIS_NO_WANDB=1,ASBESTOSIS_MODEL=densenet121 run_ensemble.sh
 ```
 
 Results are logged as a single W&B run named `ensemble_chexnet_5folds`.
@@ -139,6 +150,10 @@ Set `ASBESTOSIS_NO_WANDB=1` to disable W&B logging.
 
 ## Results (CheXNet, 5-fold CV, 60 epochs, no SWA)
 
+> **Note:** Results below are from the old independent-split scheme (non-disjoint test folds).
+> After the `StratifiedGroupKFold` fix, all 5 folds need to be retrained.
+> Each test fold will then contain ~140–150 unique patients (~400–440 images) with zero overlap.
+
 ### Per-fold — `best_test` AUC (best checkpoint evaluated on held-out test split)
 
 | Fold | macro_auc | mixed_shapes | occupational_disease | Best epoch |
@@ -150,9 +165,12 @@ Set `ASBESTOSIS_NO_WANDB=1` to disable W&B logging.
 | 4 | 0.752 | 0.606 | **0.898** | 43 |
 | **Mean ± std** | **0.764 ± 0.008** | **0.646 ± 0.024** | **0.883 ± 0.018** | — |
 
-### Ensemble — all 5 models, full dataset (n=3 163 / 3 123)
+### Ensemble — all 5 models, pooled test sets (≈3 165 rows across 5 folds)
 
 Probabilities from all five fold-models are averaged before computing metrics.
+Each fold's test split is evaluated independently and results are pooled.
+Note: the splits are 5 independent random splits (not a disjoint K-fold partition),
+so the ~3 165 pooled rows do not equal the full dataset size (2 086 images / 733 patients).
 
 | | mixed_shapes | occupational_disease | macro |
 |---|---|---|---|

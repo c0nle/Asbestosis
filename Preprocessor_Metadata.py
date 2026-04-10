@@ -18,7 +18,7 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import StratifiedShuffleSplit
+from sklearn.model_selection import StratifiedGroupKFold, StratifiedShuffleSplit
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +93,12 @@ def create_splits(
     """
     Generate stratified group K-fold train / val / test splits.
 
+    Uses ``StratifiedGroupKFold`` so that every patient appears in exactly one
+    test fold and the full dataset is covered without double-counting.  The test
+    fraction is always ``1 / n_testfolds`` (~20% for 5 folds); ``test_frac`` is
+    accepted for API compatibility but ignored.  The validation set is carved out
+    of the training portion using ``val_frac``.
+
     Each fold assigns non-overlapping patient groups to train, val, and test
     sets while approximately preserving the class distribution of
     ``training_label``.  Per-fold CSV files are written to ``output_folder``,
@@ -113,23 +119,24 @@ def create_splits(
                           splits).  Auto-detected if ``None``.
         strict_group_col: Raise a ``ValueError`` if the requested column has
                           fewer unique groups than ``n_testfolds``.
-        seed_base:        Base random seed; fold ``n`` uses ``seed_base + n``.
-        train_frac:       Fraction of data for training.
-        val_frac:         Fraction of data for validation.
-        test_frac:        Fraction of data for testing.
+        seed_base:        Random seed for reproducibility.
+        train_frac:       Accepted for API compatibility; ignored (derived from
+                          ``n_testfolds`` and ``val_frac``).
+        val_frac:         Fraction of the full dataset reserved for validation
+                          (carved from the training portion of each fold).
+        test_frac:        Accepted for API compatibility; ignored (always
+                          ``1 / n_testfolds``).
 
     Returns:
         ``metadata`` DataFrame with added ``Fold{i}`` columns marking each
         row's split assignment (``"train"``, ``"val"``, or ``"test"``).
 
     Raises:
-        ValueError: If fractions don't sum to 1, ``training_label`` is missing,
-                    or a valid grouping column cannot be found.
+        ValueError: If ``training_label`` is missing or a valid grouping column
+                    cannot be found.
     """
     if training_label not in metadata.columns:
         raise ValueError(f"training_label '{training_label}' not found in metadata columns.")
-    if abs((train_frac + val_frac + test_frac) - 1.0) > 1e-6:
-        raise ValueError("train_frac + val_frac + test_frac must sum to 1.0")
 
     metadata = metadata[metadata[training_label] != -1].copy()
     os.makedirs(output_folder, exist_ok=True)
@@ -172,7 +179,7 @@ def create_splits(
     except Exception:
         pass
 
-    # Build group-level labels for stratification.
+    # Build group-level label dict for stratification of the val split.
     group_stats = (
         metadata.groupby(group_col)[training_label]
         .apply(_mode_or_first)
@@ -180,40 +187,56 @@ def create_splits(
         .rename(columns={training_label: "group_label"})
         .dropna(subset=["group_label"])
     )
-    groups = group_stats[group_col].to_numpy()
-    group_labels = group_stats["group_label"].to_numpy()
+    group_label_dict = dict(zip(group_stats[group_col], group_stats["group_label"]))
 
-    if len(groups) < 3:
+    if len(group_label_dict) < 3:
         raise ValueError(
             f"Not enough groups for train/val/test split using '{group_col}': "
-            f"only {len(groups)} groups available."
+            f"only {len(group_label_dict)} groups available."
         )
 
-    for n_fold in range(n_testfolds):
-        fold_seed = int(seed_base) + int(n_fold)
+    # Row-level arrays for StratifiedGroupKFold.
+    g_rows = metadata[group_col].to_numpy()
+    y_rows = metadata[training_label].to_numpy()
 
-        trainval_groups, test_groups = _stratified_group_split(
-            groups, group_labels, test_size=test_frac, seed=fold_seed
+    sgkf = StratifiedGroupKFold(n_splits=n_testfolds, shuffle=True, random_state=int(seed_base))
+    # val_frac expressed relative to the train+val portion (≈ 1 - 1/n_testfolds).
+    trainval_frac = 1.0 - 1.0 / n_testfolds
+    val_rel = min(0.999, max(0.001, val_frac / trainval_frac))
+
+    for fold_idx, (trainval_row_idx, test_row_idx) in enumerate(
+        sgkf.split(np.arange(len(metadata)), y_rows, g_rows)
+    ):
+        test_patients    = set(g_rows[test_row_idx])
+        trainval_patients = sorted(set(g_rows[trainval_row_idx]))
+        tv_arr    = np.array(trainval_patients)
+        tv_labels = np.array([group_label_dict[p] for p in trainval_patients])
+
+        train_patients, val_patients = _stratified_group_split(
+            tv_arr, tv_labels, test_size=val_rel, seed=10_000 + fold_idx
         )
-        remaining_frac = max(1e-12, 1.0 - test_frac)
-        val_rel = min(0.999, max(0.001, val_frac / remaining_frac))
+        train_patients = set(train_patients)
+        val_patients   = set(val_patients)
 
-        mask_tv = np.isin(groups, trainval_groups)
-        train_groups, val_groups = _stratified_group_split(
-            groups[mask_tv], group_labels[mask_tv], test_size=val_rel, seed=10_000 + fold_seed
+        train_split = metadata[metadata[group_col].isin(train_patients)]
+        val_split   = metadata[metadata[group_col].isin(val_patients)]
+        test_split  = metadata[metadata[group_col].isin(test_patients)]
+
+        train_split.to_csv(os.path.join(output_folder, f"stratified_train_set-f{fold_idx}.csv"), index=False)
+        val_split.to_csv(  os.path.join(output_folder, f"stratified_val_set-f{fold_idx}.csv"),   index=False)
+        test_split.to_csv( os.path.join(output_folder, f"stratified_test_set-f{fold_idx}.csv"),  index=False)
+
+        metadata.loc[metadata[group_col].isin(train_patients), f"Fold{fold_idx}"] = "train"
+        metadata.loc[metadata[group_col].isin(val_patients),   f"Fold{fold_idx}"] = "val"
+        metadata.loc[metadata[group_col].isin(test_patients),  f"Fold{fold_idx}"] = "test"
+
+        n_test = len(test_split)
+        n_val  = len(val_split)
+        n_tr   = len(train_split)
+        print(
+            f"  Fold {fold_idx}: train={n_tr}  val={n_val}  test={n_test}  "
+            f"(patients: {len(train_patients)}/{len(val_patients)}/{len(test_patients)})"
         )
-
-        train_split = metadata[metadata[group_col].isin(train_groups)]
-        val_split   = metadata[metadata[group_col].isin(val_groups)]
-        test_split  = metadata[metadata[group_col].isin(test_groups)]
-
-        train_split.to_csv(os.path.join(output_folder, f"stratified_train_set-f{n_fold}.csv"), index=False)
-        val_split.to_csv(  os.path.join(output_folder, f"stratified_val_set-f{n_fold}.csv"),   index=False)
-        test_split.to_csv( os.path.join(output_folder, f"stratified_test_set-f{n_fold}.csv"),  index=False)
-
-        metadata.loc[metadata[group_col].isin(train_groups), f"Fold{n_fold}"] = "train"
-        metadata.loc[metadata[group_col].isin(val_groups),   f"Fold{n_fold}"] = "val"
-        metadata.loc[metadata[group_col].isin(test_groups),  f"Fold{n_fold}"] = "test"
 
     metadata.to_csv(output_filename, index=False)
     return metadata
