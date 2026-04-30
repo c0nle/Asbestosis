@@ -3,8 +3,8 @@ generate_report.py
 ------------------
 Generates a two-sheet XLSX report:
 
-  Sheet 1 – Label Distribution  (based on training-ready rows after all filters)
-  Sheet 2 – Data Audit          (step-by-step funnel from raw CSV to training-ready rows)
+  Sheet 1 - Label Distribution  (based on training-ready rows after all filters)
+  Sheet 2 - Data Audit          (step-by-step funnel from raw CSV to training-ready rows)
 
 Usage:
     python generate_report.py --output report.xlsx
@@ -43,6 +43,7 @@ LABEL_COLS = [
 ]
 
 TRAINING_LABELS = ["mixed_shapes", "occupational_disease"]
+BEFUND_FILE = os.path.join(BASE, "st_Befundtext_RO_Thorax_AR_noName.xlsx")
 
 
 def _is_missing(val) -> bool:
@@ -158,6 +159,106 @@ def build_training_df(df_raw: pd.DataFrame) -> tuple:
 
 
 # ---------------------------------------------------------------------------
+# Sheet 3: Patient Demographics  (age + first vs. follow-up)
+# ---------------------------------------------------------------------------
+
+FOLLOWUP_KWS = [
+    "befundänderung", "voraufnahme", "im vergleich", "unverändert",
+    "voruntersuchung", "vorbefund", "vergleichsaufnahme", "vgl.",
+]
+FIRST_KWS = ["liegen nicht vor", "liegt nicht vor", "keine voraufnahmen"]
+
+
+def build_demographics(splits_csv: str) -> pd.DataFrame:
+    df = pd.read_csv(splits_csv)
+    df["Untersuchungsdatum"] = pd.to_datetime(df["Untersuchungsdatum"], dayfirst=True)
+
+    # Join Geburtsdatum + Dokumentinhalt from Befundtext via Anforderungsnummer
+    befund = pd.read_excel(
+        BEFUND_FILE, header=8,
+        usecols=["Anforderungsnummer", "Geburtsdatum", "Dokumentinhalt"],
+    )
+    befund["Anforderungsnummer"] = pd.to_numeric(befund["Anforderungsnummer"], errors="coerce")
+    befund["Geburtsdatum"] = pd.to_datetime(befund["Geburtsdatum"], errors="coerce")
+    befund = befund.dropna(subset=["Anforderungsnummer"]).drop_duplicates(subset="Anforderungsnummer")
+
+    df = df.merge(befund, on="Anforderungsnummer", how="left")
+    valid = df.dropna(subset=["Geburtsdatum", "Untersuchungsdatum"]).copy()
+
+    # Age at examination: floor years
+    valid["age"] = (
+        (valid["Untersuchungsdatum"] - valid["Geburtsdatum"]).dt.days / 365.25
+    ).astype(int)
+
+    # Date-based first vs. follow-up
+    first_date = valid.groupby("patientID")["Untersuchungsdatum"].transform("min")
+    valid["date_based"] = (valid["Untersuchungsdatum"] == first_date).map(
+        {True: "first", False: "followup"}
+    )
+
+    # Text-based signal from Dokumentinhalt
+    text = valid["Dokumentinhalt"].fillna("").str.lower()
+    sig_fu    = text.apply(lambda t: any(k in t for k in FOLLOWUP_KWS))
+    sig_first = text.apply(lambda t: any(k in t for k in FIRST_KWS))
+    valid["text_signal"] = "unclear"
+    valid.loc[sig_fu  & ~sig_first, "text_signal"] = "followup"
+    valid.loc[sig_first & ~sig_fu,  "text_signal"] = "first"
+
+    n_total   = len(valid)
+    n_no_dob  = len(df) - n_total
+    n_first   = (valid["date_based"] == "first").sum()
+    n_followup = (valid["date_based"] == "followup").sum()
+
+    # Validation cross-counts
+    clear            = valid["text_signal"] != "unclear"
+    n_clear          = int(clear.sum())
+    agree = (
+        ((valid["date_based"] == "first")    & (valid["text_signal"] == "first")) |
+        ((valid["date_based"] == "followup") & (valid["text_signal"] == "followup"))
+    )
+    n_agree          = int(agree[clear].sum())
+    n_date1_text_fu  = int(((valid["date_based"] == "first") & (valid["text_signal"] == "followup")).sum())
+    n_date_fu_text1  = int(((valid["date_based"] == "followup") & (valid["text_signal"] == "first")).sum())
+    # Corrected first: date=first rows that text confirms are actually follow-ups are subtracted
+    n_first_corrected   = int(n_first - n_date1_text_fu)
+    n_followup_corrected = int(n_followup + n_date1_text_fu)
+
+    rows = [
+        {"Metric": "Total rows (training data)",                    "Value": n_total},
+        {"Metric": "Rows without Geburtsdatum (no Befundtext match)", "Value": n_no_dob},
+        {"Metric": "",                                              "Value": ""},
+        # Age
+        {"Metric": "── Age at examination ──",                     "Value": ""},
+        {"Metric": "Age — Mean",                                    "Value": round(valid["age"].mean(), 1)},
+        {"Metric": "Age — Median",                                  "Value": round(valid["age"].median(), 1)},
+        {"Metric": "Age — Min",                                     "Value": int(valid["age"].min())},
+        {"Metric": "Age — Max",                                     "Value": int(valid["age"].max())},
+        {"Metric": "",                                              "Value": ""},
+        # Date-based classification
+        {"Metric": "── First vs. Follow-up (date-based) ──",       "Value": ""},
+        {"Metric": "First examination",                             "Value": int(n_first)},
+        {"Metric": "Follow-up",                                     "Value": int(n_followup)},
+        {"Metric": "First examination [%]",                         "Value": round(100 * n_first / n_total, 1)},
+        {"Metric": "Follow-up [%]",                                 "Value": round(100 * n_followup / n_total, 1)},
+        {"Metric": "",                                              "Value": ""},
+        # Text-based validation
+        {"Metric": "── Text-based validation (Befundtext keywords) ──", "Value": ""},
+        {"Metric": "Follow-up keywords",                            "Value": ", ".join(FOLLOWUP_KWS)},
+        {"Metric": "First-exam keywords",                           "Value": ", ".join(FIRST_KWS)},
+        {"Metric": "Rows with clear text signal",                   "Value": f"{n_clear} / {n_total} ({100*n_clear/n_total:.1f}%)"},
+        {"Metric": "Agreement (date vs. text, where text clear)",   "Value": f"{n_agree} / {n_clear} ({100*n_agree/n_clear:.1f}%)"},
+        {"Metric": "Date=first but text=follow-up",                 "Value": f"{n_date1_text_fu}  → prior exam existed outside dataset"},
+        {"Metric": "Date=follow-up but text=first",                 "Value": n_date_fu_text1},
+        {"Metric": "",                                              "Value": ""},
+        # Corrected counts
+        {"Metric": "── Corrected counts (subtracting text-confirmed misclassifications) ──", "Value": ""},
+        {"Metric": "First examination (corrected)",                 "Value": f"{n_first_corrected} ({round(100*n_first_corrected/n_total,1)}%)"},
+        {"Metric": "Follow-up (corrected)",                         "Value": f"{n_followup_corrected} ({round(100*n_followup_corrected/n_total,1)}%)"},
+    ]
+    return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------
 # Sheet 1: Label Distribution  (on training-ready data)
 # ---------------------------------------------------------------------------
 
@@ -240,12 +341,20 @@ def main():
 
     df_audit = pd.DataFrame(audit_steps)
 
+    print("Building demographics sheet...")
+    df_demo = build_demographics(splits_csv)
+
     print(f"Writing {args.output}...")
     with pd.ExcelWriter(args.output, engine="openpyxl") as writer:
         df_labels.to_excel(writer, sheet_name="Label Distribution", index=False)
         df_audit.to_excel(writer, sheet_name="Data Audit", index=False)
+        df_demo.to_excel(writer, sheet_name="Patient Demographics", index=False)
 
-        for sheet_name, df in [("Label Distribution", df_labels), ("Data Audit", df_audit)]:
+        for sheet_name, df in [
+            ("Label Distribution", df_labels),
+            ("Data Audit", df_audit),
+            ("Patient Demographics", df_demo),
+        ]:
             ws = writer.sheets[sheet_name]
             for col_idx, col in enumerate(df.columns, 1):
                 max_len = max(len(str(col)), df[col].astype(str).str.len().max())
