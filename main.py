@@ -329,6 +329,16 @@ def main() -> None:
         action="store_true",
         help="Print per-label dataset counts and exit.",
     )
+    parser.add_argument(
+        "--filter-image-quality",
+        action="store_true",
+        help="Exclude rows where technical_quality == 0 from training/validation/test datasets.",
+    )
+    parser.add_argument(
+        "--combine-train-val",
+        action="store_true",
+        help="Merge train and val splits into a single training set, disabling validation and early stopping.",
+    )
     args = parser.parse_args()
 
     _set_seed(args.seed)
@@ -564,6 +574,7 @@ def main() -> None:
                 else:
                     raise SystemExit(msg)
 
+
     def _filter_any_label(df: pd.DataFrame) -> pd.DataFrame:
         if df.empty:
             return df
@@ -586,6 +597,19 @@ def main() -> None:
     train_metadata = _filter_rows_with_images(train_metadata, root_folder)
     val_metadata   = _filter_rows_with_images(val_metadata,   root_folder)
     test_metadata  = _filter_rows_with_images(test_metadata,  root_folder)
+    
+    # Combine train and val if requested
+    if args.combine_train_val:
+        print("Combining train and val splits into a single training set.")
+        train_metadata = pd.concat([train_metadata, val_metadata], ignore_index=True)
+        val_metadata = val_metadata.iloc[0:0]  # Empty DataFrame with same columns
+        n_va0 = len(val_metadata)
+        n_tr0 = len(train_metadata)
+        args.eval_every = 0
+        if args.early_stop_patience > 0:
+            print("Disabling early stopping since validation is disabled (--combine-train-val).")
+            args.early_stop_patience = 0
+
     if (len(train_metadata), len(val_metadata), len(test_metadata)) != (n_tr0, n_va0, n_te0):
         print(
             "Filtered missing images: "
@@ -666,7 +690,7 @@ def main() -> None:
         task_value_maps   = {t: task_value_maps[t]   for t in label_cols if t in task_value_maps}
         task_index_to_label = {t: task_index_to_label[t] for t in label_cols if t in task_index_to_label}
         train_metadata = _filter_any_label(train_metadata)
-        val_metadata   = _filter_any_label(val_metadata)
+        val_metadata   = _filter_any_label(val_metadata) if not args.combine_train_val else None
         test_metadata  = _filter_any_label(test_metadata)
 
     print(f"Active tasks for this fold: {len(label_cols)} -> " + ", ".join(label_cols))
@@ -734,26 +758,36 @@ def main() -> None:
     n_workers = int(args.num_workers)
     gen = torch.Generator()
     gen.manual_seed(int(args.seed))
+
+    # Prepare annotations for datasets
+    dataset_columns = ["fileID"] + label_cols
+    if args.filter_image_quality and "technical_quality" in prepared_metadata.columns:
+        dataset_columns.append("technical_quality")
+
     train_dataset = XRayMultiTaskDataset(
-        train_metadata[["fileID"] + label_cols],
+        train_metadata[dataset_columns],
         root_folder,
         label_columns=label_cols,
         label_value_maps=task_value_maps,
         transform=preprocess,
+        filter_image_quality=args.filter_image_quality,
     )
-    val_dataset = XRayMultiTaskDataset(
-        val_metadata[["fileID"] + label_cols],
-        root_folder,
-        label_columns=label_cols,
-        label_value_maps=task_value_maps,
-        transform=preprocess_no_aug,
-    )
+    if not args.combine_train_val:
+        val_dataset = XRayMultiTaskDataset(
+            val_metadata[dataset_columns],
+            root_folder,
+            label_columns=label_cols,
+            label_value_maps=task_value_maps,
+            transform=preprocess_no_aug,
+            filter_image_quality=args.filter_image_quality,
+        )
     test_dataset = XRayMultiTaskDataset(
-        test_metadata[["fileID"] + label_cols],
+        test_metadata[dataset_columns],
         root_folder,
         label_columns=label_cols,
         label_value_maps=task_value_maps,
         transform=preprocess_no_aug,
+        filter_image_quality=args.filter_image_quality,
     )
 
     loader_kwargs = dict(
@@ -806,7 +840,7 @@ def main() -> None:
         train_loader = DataLoader(train_dataset, sampler=sampler, **loader_kwargs)
     else:
         train_loader = DataLoader(train_dataset, sampler=RandomSampler(train_dataset, generator=gen), **loader_kwargs)
-    val_loader  = DataLoader(val_dataset,  sampler=SequentialSampler(val_dataset),  **loader_kwargs)
+    val_loader  = DataLoader(val_dataset,  sampler=SequentialSampler(val_dataset),  **loader_kwargs) if not args.combine_train_val else None
     test_loader = DataLoader(test_dataset, sampler=SequentialSampler(test_dataset), **loader_kwargs)
 
     model_name = str(args.model)
@@ -853,13 +887,13 @@ def main() -> None:
 
     if not args.no_wandb:
         wandb.init(
-            project="Asbestosis",
+            project="Asbestosis_train-test",
             config={
                 "learning_rate":               float(args.learning_rate),
                 "dataset":                     root_folder,
                 "split_folder":                fold_folder,
                 "train_samples":               len(train_loader.dataset),
-                "val_samples":                 len(val_loader.dataset),
+                "val_samples":                 len(val_loader.dataset) if not args.combine_train_val else 0,
                 "test_samples":                len(test_loader.dataset),
                 "epochs":                      int(args.epochs),
                 "batch_size":                  int(args.batch_size),
@@ -869,6 +903,8 @@ def main() -> None:
                 "machine":                     "HPC",
                 "labels":                      label_cols,
                 "fold":                        fold,
+                "model_name":                  model_name,
+                "batch_size":                  int(args.batch_size),
                 "metadata":                    metadata_file,
                 "primary_label":               primary_label,
                 "train_sampler":               str(args.train_sampler),
@@ -884,16 +920,16 @@ def main() -> None:
                 "group_splits_by":             str(args.group_splits_by),
                 "leakage_action":              str(args.leakage_action),
             },
-            name=f"multitask_{model_name}_b={int(args.batch_size)}_l={float(args.learning_rate)}_n={int(args.epochs)}_fold={fold}",
+            name=f"multitask_{model_name}_fold={fold}_labels={primary_label}",
         )
 
-    if args.early_stop_patience > 0 and args.eval_every == 0:
+    if args.early_stop_patience > 0 and args.eval_every == 0 and not args.combine_train_val:
         args.eval_every = 1
         print("Early stopping enabled -> forcing --eval-every 1")
 
     best_score = None
     best_epoch = -1
-    best_path = os.path.join(output_folder, f"best_{model_name}_labels=multitask_fold={fold}.pth")
+    best_path = os.path.join(output_folder, f"best_{model_name}_label={primary_label}_fold={fold}.pth")
     no_improve = 0
     best_fixed_thresholds = None
 
@@ -933,7 +969,7 @@ def main() -> None:
             wandb_detail=args.wandb_detail,
         )
 
-        do_eval = args.eval_every and (epoch % int(args.eval_every) == 0 or epoch == int(args.epochs) - 1)
+        do_eval = not args.combine_train_val and args.eval_every and (epoch % int(args.eval_every) == 0 or epoch == int(args.epochs) - 1)
         do_test = args.test_every and (epoch % int(args.test_every) == 0 or epoch == int(args.epochs) - 1)
 
         eval_metrics = None
@@ -1126,6 +1162,24 @@ def main() -> None:
             f"asbestosis_{model_name}_n{int(args.epochs)}_b{int(args.batch_size)}_labels=multitask_fold={fold}.pth",
         ),
     )
+
+    # When early stopping did not run (e.g. --combine-train-val), no best_* checkpoint
+    # exists yet.  Save one now so that analyze_results.py can load the model together
+    # with its label list.  Does not overwrite an existing best_* (early-stop wins).
+    if not os.path.isfile(best_path):
+        torch.save(
+            {
+                "model_state_dict":      model.state_dict(),
+                "epoch":                 final_epoch,
+                "labels":                label_cols,
+                "task_index_to_label":   task_index_to_label,
+                "task_value_maps":       task_value_maps,
+                "best_fixed_thresholds": best_fixed_thresholds or {},
+            },
+            best_path,
+        )
+        print(f"Saved final checkpoint (with metadata) to {best_path}")
+
     if _wandb_is_active():
         wandb.finish()
 

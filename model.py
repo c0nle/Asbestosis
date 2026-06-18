@@ -353,6 +353,7 @@ def _build_multitask_model(
         if no_pretrained:
             print("Warning: --no-pretrained has no effect for chexnet (CheXNet weights are always loaded).")
         return _build_chexnet_multitask(task_names, head_dropout=head_dropout)
+    # all other options: "resnet18", "efficientnet_b0", "densenet121", "mobilenet_v3_small", "mobilenet_v3_large" are in CNN_CONFIGS
     backbone, head_in_features = _build_cnn_backbone(name, no_pretrained=no_pretrained)
     return MultiTaskModel(backbone, head_in_features=head_in_features, task_names=task_names, head_dropout=head_dropout)
 

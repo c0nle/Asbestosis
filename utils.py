@@ -180,10 +180,17 @@ def _ensure_file_id(metadata: pd.DataFrame, mapping_file: str) -> pd.DataFrame:
 
     If ``fileID`` is already present and non-empty, the DataFrame is returned
     unchanged.  Otherwise the mapping CSV is used to resolve
-    ``Anforderungsnummer`` → ``fileID``.  Rows without a match receive ``-1``.
+    ``Untersuchungsnummer`` → ``fileID`` (preferred, 1:1 per image).  Falls
+    back to ``Anforderungsnummer`` for rows that don't match via
+    Untersuchungsnummer.  Rows without any match receive ``-1``.
+
+    The medicoID in mapping.csv encodes both keys:
+        medicoID = Anforderungsnummer + two-digit index
+        Untersuchungsnummer = Anforderungsnummer + '-' + index (no leading zero)
 
     Args:
-        metadata:     Metadata DataFrame (must contain ``Anforderungsnummer``).
+        metadata:     Metadata DataFrame (must contain ``Anforderungsnummer``
+                      and ideally ``Untersuchungsnummer``).
         mapping_file: Path to the medicoID → fileID mapping CSV.
 
     Returns:
@@ -197,15 +204,54 @@ def _ensure_file_id(metadata: pd.DataFrame, mapping_file: str) -> pd.DataFrame:
     mapping["fileID"] = pd.to_numeric(mapping.get("fileID"), errors="coerce")
     mapping["Anforderungsnummer"] = mapping["medicoID"].str[:-2]
     mask = mapping["Anforderungsnummer"].str.fullmatch(r"\d+").eq(True)
-    mapping = mapping[mask]
+    mapping = mapping[mask].copy()
     mapping["Anforderungsnummer"] = mapping["Anforderungsnummer"].astype(int)
 
-    merged = metadata.drop(columns=["fileID"], errors="ignore").merge(
-        mapping[["Anforderungsnummer", "fileID"]],
-        on="Anforderungsnummer",
-        how="left",
+    # Reconstruct Untersuchungsnummer key from medicoID suffix (strip leading zeros)
+    raw_idx = mapping["medicoID"].str[-2:].str.lstrip("0")
+    mapping["_unt_key"] = (
+        mapping["Anforderungsnummer"].astype(str) + "-" +
+        raw_idx.where(raw_idx != "", other="0")
     )
-    merged["fileID"] = merged["fileID"].fillna(-1).astype(int)
+    # 7 _unt_key values appear twice in mapping.csv (same Untersuchungsnummer,
+    # two fileIDs on disk). Keep first to avoid duplicate training rows.
+    mapping = mapping.drop_duplicates("_unt_key")
+
+    meta = metadata.drop(columns=["fileID"], errors="ignore").copy()
+
+    # Primary: join via Untersuchungsnummer (exact 1:1 per image)
+    if "Untersuchungsnummer" in meta.columns:
+        meta["Untersuchungsnummer"] = meta["Untersuchungsnummer"].astype(str)
+        merged = meta.merge(
+            mapping[["_unt_key", "fileID"]],
+            left_on="Untersuchungsnummer", right_on="_unt_key",
+            how="left",
+        ).drop(columns=["_unt_key"], errors="ignore")
+        merged["fileID"] = merged["fileID"].fillna(-1).astype(int)
+
+        # Fallback for unmatched rows: try Anforderungsnummer
+        unmatched = merged["fileID"] == -1
+        if unmatched.any():
+            anf_map = (
+                mapping[["Anforderungsnummer", "fileID"]]
+                .drop_duplicates("Anforderungsnummer")
+                .set_index("Anforderungsnummer")["fileID"]
+            )
+            merged.loc[unmatched, "fileID"] = (
+                merged.loc[unmatched, "Anforderungsnummer"]
+                .map(anf_map)
+                .fillna(-1)
+                .astype(int)
+                .values
+            )
+    else:
+        # No Untersuchungsnummer column: fall back to Anforderungsnummer join
+        merged = meta.merge(
+            mapping[["Anforderungsnummer", "fileID"]],
+            on="Anforderungsnummer", how="left",
+        )
+        merged["fileID"] = merged["fileID"].fillna(-1).astype(int)
+
     return merged
 
 
