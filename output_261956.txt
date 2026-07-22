@@ -1,0 +1,329 @@
+[INFO] Module zlib/1.3.1 loaded.
+[INFO] Module binutils/2.42 loaded.
+[INFO] Module GCCcore/13.2.0 loaded.
+
+Due to MODULEPATH changes, the following have been reloaded:
+  1) binutils/2.42     2) zlib/1.3.1
+
+The following have been reloaded with a version change:
+  1) GCCcore/13.3.0 => GCCcore/13.2.0
+
+[INFO] Module CUDA/12.8.0 loaded.
+[INFO] Module Python/3.11.5 loaded.
+
+The following have been reloaded with a version change:
+  1) binutils/2.42 => binutils/2.40     2) zlib/1.3.1 => zlib/1.2.13
+
+Fri May  8 12:14:32 PM CEST 2026
+wandb: [wandb.login()] Loaded credentials for https://api.wandb.ai from /home/it336446/.netrc.
+wandb: Currently logged in as: debora-jutz to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: Tracking run with wandb version 0.26.1
+wandb: Run data is saved locally in /rwthfs/rz/cluster/home/rwth1954/Asbestosis/wandb/run-20260508_121512-xh0kuskq
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run multitask_chexnet_b=24_l=0.0003_n=60_fold=4
+wandb: ⭐️ View project at https://wandb.ai/debora-jutz/Asbestosis
+wandb: 🚀 View run at https://wandb.ai/debora-jutz/Asbestosis/runs/xh0kuskq
+wandb: updating run metadata; uploading artifact run-xh0kuskq-roc_curvefinal_testdiffuse_pleural_location_table-NYoRaQ; uploading artifact run-xh0kuskq-pr_curvefinal_testdiffuse_pleural_location_table-MF6yQQ; uploading artifact run-xh0kuskq-roc_curvefinal_testlocal_pleural_location_table-SkZOFA; uploading artifact run-xh0kuskq-pr_curvefinal_testlocal_pleural_location_table-BU1rdw (+ 6 more)
+wandb: uploading artifact run-xh0kuskq-roc_curvefinal_testlocal_pleural_location_table-SkZOFA; uploading artifact run-xh0kuskq-pr_curvefinal_testlocal_pleural_location_table-BU1rdw; uploading artifact run-xh0kuskq-roc_curvefinal_testpleural_calcification_location_table-5qlzsw; uploading artifact run-xh0kuskq-pr_curvefinal_testpleural_calcification_location_table-lSz9iw; uploading artifact run-xh0kuskq-roc_curvefinal_testpleural_calcification_side_table-5GPafA (+ 3 more)
+wandb: uploading artifact run-xh0kuskq-pr_curvefinal_testpleural_calcification_location_table-lSz9iw; uploading artifact run-xh0kuskq-roc_curvefinal_testpleural_calcification_side_table-5GPafA; uploading artifact run-xh0kuskq-pr_curvefinal_testpleural_calcification_side_table-9uGDUA; uploading artifact run-xh0kuskq-roc_curvefinal_testoccupational_disease_table-1YrqIA; uploading artifact run-xh0kuskq-pr_curvefinal_testoccupational_disease_table-uYurQw
+wandb: uploading artifact run-xh0kuskq-pr_curvefinal_testoccupational_disease_table-uYurQw
+wandb: uploading media/table/pr_curve/final_test/occupational_disease_table_241_13a6459f59ab740a6be7.table.json; uploading media/table/roc_curve/final_test/local_pleural_location_table_241_0a1a9387f9db81757f4d.table.json; uploading config.yaml
+wandb: uploading history steps 241-241, summary, console lines 240-241
+wandb: 
+wandb: Run history:
+wandb:       average_loss/eval ██▆▆▆▄▃▃▂▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb: average_loss/final_test ▁
+wandb:      average_loss/train ███▇▇▅▅▅▃▄▂▃▄▂▂▃▃▂▂▂▁▂▁▂▂▂▂▂▂▃▃▂▂▂▃▂▁▂▂▂
+wandb:              epoch/eval ▁▁▁▁▂▂▂▂▃▃▃▃▃▃▄▄▄▄▄▅▅▅▅▆▆▆▆▆▆▆▇▇▇▇▇▇▇███
+wandb:        epoch/final_test ▁
+wandb:             epoch/train ▁▁▁▁▂▂▂▂▂▃▃▃▃▃▃▄▄▄▄▄▅▅▅▅▅▆▆▆▆▆▆▇▇▇▇▇▇███
+wandb:          macro_auc/eval ▁▂▄▇▇▇▇▇████████████████████████████████
+wandb:    macro_auc/final_test ▁
+wandb:         macro_auc/train ▁▁▃▄▃▅▄▆▅▆▆▄▆▆▅▇▇▇▆▇▆▇▇▇▇▇▇▇▇▇▇▇▆▇▇▇█▇█▇
+wandb:           macro_f1/eval ▅▄▅▅▄▁▅▆▇▇▇▇▇▇▇▇▇▇█▇████▇██▇▇▇▇▇▇▇▇▇▇▇▇▇
+wandb:                     +59 ...
+wandb: 
+wandb: Run summary:
+wandb:         average_loss/eval 0.49
+wandb:   average_loss/final_test 0.49
+wandb:        average_loss/train 0.42791
+wandb:                epoch/eval 59
+wandb:          epoch/final_test 59
+wandb:               epoch/train 59
+wandb: macro_accuracy/final_test 0.79796
+wandb:            macro_auc/eval 0.67073
+wandb:      macro_auc/final_test 0.73227
+wandb:           macro_auc/train 0.82465
+wandb:                       +60 ...
+wandb: 
+wandb: 🚀 View run multitask_chexnet_b=24_l=0.0003_n=60_fold=4 at: https://wandb.ai/debora-jutz/Asbestosis/runs/xh0kuskq
+wandb: ⭐️ View project at: https://wandb.ai/debora-jutz/Asbestosis
+wandb: Synced 5 W&B file(s), 12 media file(s), 24 artifact file(s) and 0 other file(s)
+wandb: Find logs at: ./wandb/run-20260508_121512-xh0kuskq/logs
+Filtered missing images: train 1254->1253, val 468->468, test 354->354
+[small_irregular_size] BCEWithLogitsLoss(pos_weight=0.0000) [neg=0 pos=19]
+[mixed_shapes] pos_weight reset to 1.0 (primary_balanced sampler handles imbalance)
+[mixed_shapes] BCEWithLogitsLoss(pos_weight=1.0000) [neg=920 pos=333]
+[diffuse_pleural_thickening_width] BCEWithLogitsLoss(pos_weight=0.0000) [neg=0 pos=546]
+[diffuse_pleural_thickening_extend] BCEWithLogitsLoss(pos_weight=0.0000) [neg=0 pos=596]
+[diffuse_pleural_location] BCEWithLogitsLoss(pos_weight=0.1288) [neg=68 pos=528]
+[localized_pleural_thickening_extend] BCEWithLogitsLoss(pos_weight=0.0000) [neg=0 pos=57]
+[local_pleural_location] pos_weight capped 45.85 → 10.0
+[local_pleural_location] BCEWithLogitsLoss(pos_weight=10.0000) [neg=1192 pos=26]
+[pleural_calcification_location] pos_weight capped 55.29 → 10.0
+[pleural_calcification_location] BCEWithLogitsLoss(pos_weight=10.0000) [neg=1161 pos=21]
+[pleural_calcification_side] BCEWithLogitsLoss(pos_weight=0.0741) [neg=2 pos=27]
+[occupational_disease] pos_weight capped 13.89 → 10.0
+[occupational_disease] BCEWithLogitsLoss(pos_weight=10.0000) [neg=1153 pos=83]
+Dropping degenerate tasks (train has only one class): diffuse_pleural_thickening_extend, diffuse_pleural_thickening_width, localized_pleural_thickening_extend, small_irregular_size
+Active tasks for this fold: 6 -> mixed_shapes, diffuse_pleural_location, local_pleural_location, pleural_calcification_location, pleural_calcification_side, occupational_disease
+Focus labels: mixed_shapes, occupational_disease
+Backbone tasks: 5/6 (min_pos=5, min_neg=5). Head-only tasks: 1.
+Head-only (no backbone gradients): pleural_calcification_side
+Train sampler: primary_balanced (mixed_shapes) pos=319 neg=881 pos_weight=2.7618
+CheXNet weights loaded from /rwthfs/rz/cluster/home/rwth1954/Asbestosis/chexnet_features_state_dict.pt (727 keys, 0 missing, 2 unexpected)
+train macro: loss=0.6870 macro_auc=0.492 macro_pr_auc=0.412
+eval macro: loss=0.6691 macro_auc=0.467 macro_pr_auc=0.347
+eval focus (epoch 0): mixed_shapes auc=0.599 pr_auc=0.309 | occupational_disease auc=0.228 pr_auc=0.044
+eval focus confusion (epoch 0): mixed_shapes thr=0.500 tp=80 fp=178 tn=156 fn=38 prec=0.310 rec=0.678 f1=0.426 | occupational_disease thr=0.500 tp=9 fp=342 tn=73 fn=21 prec=0.026 rec=0.300 f1=0.047
+train macro: loss=0.6938 macro_auc=0.511 macro_pr_auc=0.415
+eval macro: loss=0.6591 macro_auc=0.490 macro_pr_auc=0.350
+eval focus (epoch 1): mixed_shapes auc=0.602 pr_auc=0.311 | occupational_disease auc=0.269 pr_auc=0.052
+eval focus confusion (epoch 1): mixed_shapes thr=0.500 tp=73 fp=151 tn=183 fn=45 prec=0.326 rec=0.619 f1=0.427 | occupational_disease thr=0.500 tp=8 fp=272 tn=143 fn=22 prec=0.029 rec=0.267 f1=0.052
+train macro: loss=0.6887 macro_auc=0.541 macro_pr_auc=0.428
+eval macro: loss=0.6457 macro_auc=0.541 macro_pr_auc=0.360
+eval focus (epoch 2): mixed_shapes auc=0.606 pr_auc=0.312 | occupational_disease auc=0.429 pr_auc=0.093
+eval focus confusion (epoch 2): mixed_shapes thr=0.500 tp=73 fp=148 tn=186 fn=45 prec=0.330 rec=0.619 f1=0.431 | occupational_disease thr=0.517 tp=1 fp=1 tn=414 fn=29 prec=0.500 rec=0.033 f1=0.062
+train macro: loss=0.6953 macro_auc=0.593 macro_pr_auc=0.448
+eval macro: loss=0.6274 macro_auc=0.605 macro_pr_auc=0.381
+eval focus (epoch 3): mixed_shapes auc=0.616 pr_auc=0.324 | occupational_disease auc=0.710 pr_auc=0.164
+eval focus confusion (epoch 3): mixed_shapes thr=0.500 tp=57 fp=116 tn=218 fn=61 prec=0.329 rec=0.483 f1=0.392 | occupational_disease thr=0.516 tp=1 fp=1 tn=414 fn=29 prec=0.500 rec=0.033 f1=0.062
+train macro: loss=0.6619 macro_auc=0.647 macro_pr_auc=0.332
+eval macro: loss=0.6016 macro_auc=0.633 macro_pr_auc=0.392
+eval focus (epoch 4): mixed_shapes auc=0.623 pr_auc=0.338 | occupational_disease auc=0.818 pr_auc=0.218
+eval focus confusion (epoch 4): mixed_shapes thr=0.500 tp=35 fp=68 tn=266 fn=83 prec=0.340 rec=0.297 f1=0.317 | occupational_disease thr=0.500 tp=6 fp=20 tn=395 fn=24 prec=0.231 rec=0.200 f1=0.214
+train macro: loss=0.6808 macro_auc=0.613 macro_pr_auc=0.422
+eval macro: loss=0.5784 macro_auc=0.646 macro_pr_auc=0.402
+eval focus (epoch 5): mixed_shapes auc=0.630 pr_auc=0.345 | occupational_disease auc=0.846 pr_auc=0.230
+eval focus confusion (epoch 5): mixed_shapes thr=0.514 tp=10 fp=9 tn=325 fn=108 prec=0.526 rec=0.085 f1=0.146 | occupational_disease thr=0.500 tp=20 fp=49 tn=366 fn=10 prec=0.290 rec=0.667 f1=0.404
+train macro: loss=0.6462 macro_auc=0.647 macro_pr_auc=0.444
+eval macro: loss=0.5490 macro_auc=0.654 macro_pr_auc=0.407
+eval focus (epoch 6): mixed_shapes auc=0.634 pr_auc=0.353 | occupational_disease auc=0.854 pr_auc=0.243
+eval focus confusion (epoch 6): mixed_shapes thr=0.521 tp=11 fp=10 tn=324 fn=107 prec=0.524 rec=0.093 f1=0.158 | occupational_disease thr=0.500 tp=22 fp=59 tn=356 fn=8 prec=0.272 rec=0.733 f1=0.396
+train macro: loss=0.6187 macro_auc=0.687 macro_pr_auc=0.472
+eval macro: loss=0.5247 macro_auc=0.655 macro_pr_auc=0.411
+eval focus (epoch 7): mixed_shapes auc=0.637 pr_auc=0.352 | occupational_disease auc=0.855 pr_auc=0.258
+eval focus confusion (epoch 7): mixed_shapes thr=0.527 tp=11 fp=11 tn=323 fn=107 prec=0.500 rec=0.093 f1=0.157 | occupational_disease thr=0.500 tp=22 fp=59 tn=356 fn=8 prec=0.272 rec=0.733 f1=0.396
+train macro: loss=0.6214 macro_auc=0.672 macro_pr_auc=0.489
+eval macro: loss=0.4935 macro_auc=0.656 macro_pr_auc=0.413
+eval focus (epoch 8): mixed_shapes auc=0.646 pr_auc=0.357 | occupational_disease auc=0.857 pr_auc=0.273
+eval focus confusion (epoch 8): mixed_shapes thr=0.523 tp=9 fp=9 tn=325 fn=109 prec=0.500 rec=0.076 f1=0.132 | occupational_disease thr=0.556 tp=5 fp=5 tn=410 fn=25 prec=0.500 rec=0.167 f1=0.250
+train macro: loss=0.5669 macro_auc=0.733 macro_pr_auc=0.395
+eval macro: loss=0.4800 macro_auc=0.657 macro_pr_auc=0.418
+eval focus (epoch 9): mixed_shapes auc=0.648 pr_auc=0.362 | occupational_disease auc=0.855 pr_auc=0.292
+eval focus confusion (epoch 9): mixed_shapes thr=0.548 tp=13 fp=13 tn=321 fn=105 prec=0.500 rec=0.110 f1=0.181 | occupational_disease thr=0.595 tp=2 fp=2 tn=413 fn=28 prec=0.500 rec=0.067 f1=0.118
+train macro: loss=0.5586 macro_auc=0.714 macro_pr_auc=0.382
+eval macro: loss=0.4614 macro_auc=0.661 macro_pr_auc=0.423
+eval focus (epoch 10): mixed_shapes auc=0.646 pr_auc=0.361 | occupational_disease auc=0.863 pr_auc=0.304
+eval focus confusion (epoch 10): mixed_shapes thr=0.541 tp=15 fp=15 tn=319 fn=103 prec=0.500 rec=0.127 f1=0.203 | occupational_disease thr=0.607 tp=4 fp=4 tn=411 fn=26 prec=0.500 rec=0.133 f1=0.211
+train macro: loss=0.5404 macro_auc=0.727 macro_pr_auc=0.498
+eval macro: loss=0.4401 macro_auc=0.662 macro_pr_auc=0.427
+eval focus (epoch 11): mixed_shapes auc=0.648 pr_auc=0.364 | occupational_disease auc=0.867 pr_auc=0.326
+eval focus confusion (epoch 11): mixed_shapes thr=0.560 tp=16 fp=16 tn=318 fn=102 prec=0.500 rec=0.136 f1=0.213 | occupational_disease thr=0.644 tp=4 fp=4 tn=411 fn=26 prec=0.500 rec=0.133 f1=0.211
+train macro: loss=0.4946 macro_auc=0.657 macro_pr_auc=0.490
+eval macro: loss=0.4329 macro_auc=0.661 macro_pr_auc=0.427
+eval focus (epoch 12): mixed_shapes auc=0.650 pr_auc=0.370 | occupational_disease auc=0.872 pr_auc=0.320
+eval focus confusion (epoch 12): mixed_shapes thr=0.607 tp=15 fp=15 tn=319 fn=103 prec=0.500 rec=0.127 f1=0.203 | occupational_disease thr=0.684 tp=4 fp=4 tn=411 fn=26 prec=0.500 rec=0.133 f1=0.211
+train macro: loss=0.5278 macro_auc=0.756 macro_pr_auc=0.541
+eval macro: loss=0.4145 macro_auc=0.663 macro_pr_auc=0.425
+eval focus (epoch 13): mixed_shapes auc=0.654 pr_auc=0.375 | occupational_disease auc=0.871 pr_auc=0.308
+eval focus confusion (epoch 13): mixed_shapes thr=0.620 tp=15 fp=15 tn=319 fn=103 prec=0.500 rec=0.127 f1=0.203 | occupational_disease thr=0.749 tp=3 fp=3 tn=412 fn=27 prec=0.500 rec=0.100 f1=0.167
+train macro: loss=0.5208 macro_auc=0.739 macro_pr_auc=0.489
+eval macro: loss=0.4069 macro_auc=0.664 macro_pr_auc=0.429
+eval focus (epoch 14): mixed_shapes auc=0.644 pr_auc=0.380 | occupational_disease auc=0.876 pr_auc=0.311
+eval focus confusion (epoch 14): mixed_shapes thr=0.635 tp=15 fp=15 tn=319 fn=103 prec=0.500 rec=0.127 f1=0.203 | occupational_disease thr=0.791 tp=3 fp=3 tn=412 fn=27 prec=0.500 rec=0.100 f1=0.167
+train macro: loss=0.4562 macro_auc=0.670 macro_pr_auc=0.527
+eval macro: loss=0.4003 macro_auc=0.665 macro_pr_auc=0.432
+eval focus (epoch 15): mixed_shapes auc=0.644 pr_auc=0.375 | occupational_disease auc=0.876 pr_auc=0.330
+eval focus confusion (epoch 15): mixed_shapes thr=0.645 tp=14 fp=13 tn=321 fn=104 prec=0.519 rec=0.119 f1=0.193 | occupational_disease thr=0.837 tp=3 fp=2 tn=413 fn=27 prec=0.600 rec=0.100 f1=0.171
+train macro: loss=0.5048 macro_auc=0.780 macro_pr_auc=0.544
+eval macro: loss=0.3993 macro_auc=0.665 macro_pr_auc=0.434
+eval focus (epoch 16): mixed_shapes auc=0.638 pr_auc=0.379 | occupational_disease auc=0.882 pr_auc=0.328
+eval focus confusion (epoch 16): mixed_shapes thr=0.654 tp=15 fp=15 tn=319 fn=103 prec=0.500 rec=0.127 f1=0.203 | occupational_disease thr=0.868 tp=3 fp=3 tn=412 fn=27 prec=0.500 rec=0.100 f1=0.167
+train macro: loss=0.4743 macro_auc=0.732 macro_pr_auc=0.512
+eval macro: loss=0.3964 macro_auc=0.666 macro_pr_auc=0.432
+eval focus (epoch 17): mixed_shapes auc=0.641 pr_auc=0.383 | occupational_disease auc=0.881 pr_auc=0.322
+eval focus confusion (epoch 17): mixed_shapes thr=0.664 tp=15 fp=15 tn=319 fn=103 prec=0.500 rec=0.127 f1=0.203 | occupational_disease thr=0.888 tp=3 fp=3 tn=412 fn=27 prec=0.500 rec=0.100 f1=0.167
+train macro: loss=0.5172 macro_auc=0.759 macro_pr_auc=0.524
+eval macro: loss=0.3931 macro_auc=0.665 macro_pr_auc=0.436
+eval focus (epoch 18): mixed_shapes auc=0.633 pr_auc=0.377 | occupational_disease auc=0.884 pr_auc=0.346
+eval focus confusion (epoch 18): mixed_shapes thr=0.635 tp=18 fp=18 tn=316 fn=100 prec=0.500 rec=0.153 f1=0.234 | occupational_disease thr=0.901 tp=3 fp=3 tn=412 fn=27 prec=0.500 rec=0.100 f1=0.167
+train macro: loss=0.4525 macro_auc=0.703 macro_pr_auc=0.522
+eval macro: loss=0.3892 macro_auc=0.664 macro_pr_auc=0.434
+eval focus (epoch 19): mixed_shapes auc=0.635 pr_auc=0.378 | occupational_disease auc=0.885 pr_auc=0.344
+eval focus confusion (epoch 19): mixed_shapes thr=0.648 tp=17 fp=17 tn=317 fn=101 prec=0.500 rec=0.144 f1=0.224 | occupational_disease thr=0.906 tp=3 fp=3 tn=412 fn=27 prec=0.500 rec=0.100 f1=0.167
+train macro: loss=0.4736 macro_auc=0.702 macro_pr_auc=0.504
+eval macro: loss=0.3861 macro_auc=0.667 macro_pr_auc=0.434
+eval focus (epoch 20): mixed_shapes auc=0.635 pr_auc=0.374 | occupational_disease auc=0.889 pr_auc=0.340
+eval focus confusion (epoch 20): mixed_shapes thr=0.633 tp=17 fp=16 tn=318 fn=101 prec=0.515 rec=0.144 f1=0.225 | occupational_disease thr=0.888 tp=3 fp=3 tn=412 fn=27 prec=0.500 rec=0.100 f1=0.167
+train macro: loss=0.4368 macro_auc=0.800 macro_pr_auc=0.520
+eval macro: loss=0.3837 macro_auc=0.667 macro_pr_auc=0.437
+eval focus (epoch 21): mixed_shapes auc=0.637 pr_auc=0.381 | occupational_disease auc=0.890 pr_auc=0.356
+eval focus confusion (epoch 21): mixed_shapes thr=0.642 tp=20 fp=20 tn=314 fn=98 prec=0.500 rec=0.169 f1=0.253 | occupational_disease thr=0.911 tp=3 fp=3 tn=412 fn=27 prec=0.500 rec=0.100 f1=0.167
+train macro: loss=0.4375 macro_auc=0.821 macro_pr_auc=0.506
+eval macro: loss=0.3835 macro_auc=0.668 macro_pr_auc=0.436
+eval focus (epoch 22): mixed_shapes auc=0.638 pr_auc=0.374 | occupational_disease auc=0.889 pr_auc=0.348
+eval focus confusion (epoch 22): mixed_shapes thr=0.629 tp=20 fp=20 tn=314 fn=98 prec=0.500 rec=0.169 f1=0.253 | occupational_disease thr=0.884 tp=3 fp=3 tn=412 fn=27 prec=0.500 rec=0.100 f1=0.167
+train macro: loss=0.4670 macro_auc=0.791 macro_pr_auc=0.555
+eval macro: loss=0.3811 macro_auc=0.665 macro_pr_auc=0.435
+eval focus (epoch 23): mixed_shapes auc=0.644 pr_auc=0.378 | occupational_disease auc=0.885 pr_auc=0.367
+eval focus confusion (epoch 23): mixed_shapes thr=0.629 tp=20 fp=20 tn=314 fn=98 prec=0.500 rec=0.169 f1=0.253 | occupational_disease thr=0.916 tp=3 fp=3 tn=412 fn=27 prec=0.500 rec=0.100 f1=0.167
+train macro: loss=0.4830 macro_auc=0.801 macro_pr_auc=0.539
+eval macro: loss=0.3843 macro_auc=0.666 macro_pr_auc=0.437
+eval focus (epoch 24): mixed_shapes auc=0.643 pr_auc=0.379 | occupational_disease auc=0.889 pr_auc=0.377
+eval focus confusion (epoch 24): mixed_shapes thr=0.624 tp=21 fp=21 tn=313 fn=97 prec=0.500 rec=0.178 f1=0.263 | occupational_disease thr=0.905 tp=3 fp=3 tn=412 fn=27 prec=0.500 rec=0.100 f1=0.167
+train macro: loss=0.4868 macro_auc=0.760 macro_pr_auc=0.539
+eval macro: loss=0.3853 macro_auc=0.667 macro_pr_auc=0.439
+eval focus (epoch 25): mixed_shapes auc=0.641 pr_auc=0.376 | occupational_disease auc=0.889 pr_auc=0.376
+eval focus confusion (epoch 25): mixed_shapes thr=0.640 tp=20 fp=20 tn=314 fn=98 prec=0.500 rec=0.169 f1=0.253 | occupational_disease thr=0.932 tp=2 fp=2 tn=413 fn=28 prec=0.500 rec=0.067 f1=0.118
+train macro: loss=0.4514 macro_auc=0.783 macro_pr_auc=0.490
+eval macro: loss=0.3849 macro_auc=0.667 macro_pr_auc=0.438
+eval focus (epoch 26): mixed_shapes auc=0.644 pr_auc=0.377 | occupational_disease auc=0.888 pr_auc=0.376
+eval focus confusion (epoch 26): mixed_shapes thr=0.634 tp=18 fp=17 tn=317 fn=100 prec=0.514 rec=0.153 f1=0.235 | occupational_disease thr=0.914 tp=2 fp=2 tn=413 fn=28 prec=0.500 rec=0.067 f1=0.118
+train macro: loss=0.4486 macro_auc=0.761 macro_pr_auc=0.432
+eval macro: loss=0.3830 macro_auc=0.667 macro_pr_auc=0.438
+eval focus (epoch 27): mixed_shapes auc=0.645 pr_auc=0.378 | occupational_disease auc=0.888 pr_auc=0.379
+eval focus confusion (epoch 27): mixed_shapes thr=0.636 tp=19 fp=19 tn=315 fn=99 prec=0.500 rec=0.161 f1=0.244 | occupational_disease thr=0.923 tp=2 fp=2 tn=413 fn=28 prec=0.500 rec=0.067 f1=0.118
+train macro: loss=0.4992 macro_auc=0.802 macro_pr_auc=0.541
+eval macro: loss=0.3792 macro_auc=0.668 macro_pr_auc=0.439
+eval focus (epoch 28): mixed_shapes auc=0.646 pr_auc=0.380 | occupational_disease auc=0.890 pr_auc=0.381
+eval focus confusion (epoch 28): mixed_shapes thr=0.633 tp=19 fp=19 tn=315 fn=99 prec=0.500 rec=0.161 f1=0.244 | occupational_disease thr=0.892 tp=9 fp=9 tn=406 fn=21 prec=0.500 rec=0.300 f1=0.375
+train macro: loss=0.4487 macro_auc=0.737 macro_pr_auc=0.542
+eval macro: loss=0.3787 macro_auc=0.667 macro_pr_auc=0.439
+eval focus (epoch 29): mixed_shapes auc=0.646 pr_auc=0.378 | occupational_disease auc=0.889 pr_auc=0.384
+eval focus confusion (epoch 29): mixed_shapes thr=0.634 tp=18 fp=18 tn=316 fn=100 prec=0.500 rec=0.153 f1=0.234 | occupational_disease thr=0.893 tp=9 fp=9 tn=406 fn=21 prec=0.500 rec=0.300 f1=0.375
+train macro: loss=0.3944 macro_auc=0.805 macro_pr_auc=0.551
+eval macro: loss=0.3790 macro_auc=0.668 macro_pr_auc=0.441
+eval focus (epoch 30): mixed_shapes auc=0.647 pr_auc=0.387 | occupational_disease auc=0.888 pr_auc=0.390
+eval focus confusion (epoch 30): mixed_shapes thr=0.649 tp=17 fp=17 tn=317 fn=101 prec=0.500 rec=0.144 f1=0.224 | occupational_disease thr=0.875 tp=10 fp=10 tn=405 fn=20 prec=0.500 rec=0.333 f1=0.400
+train macro: loss=0.4834 macro_auc=0.717 macro_pr_auc=0.532
+eval macro: loss=0.3806 macro_auc=0.666 macro_pr_auc=0.436
+eval focus (epoch 31): mixed_shapes auc=0.649 pr_auc=0.385 | occupational_disease auc=0.887 pr_auc=0.385
+eval focus confusion (epoch 31): mixed_shapes thr=0.624 tp=21 fp=21 tn=313 fn=97 prec=0.500 rec=0.178 f1=0.263 | occupational_disease thr=0.891 tp=10 fp=10 tn=405 fn=20 prec=0.500 rec=0.333 f1=0.400
+train macro: loss=0.4375 macro_auc=0.800 macro_pr_auc=0.598
+eval macro: loss=0.3817 macro_auc=0.667 macro_pr_auc=0.436
+eval focus (epoch 32): mixed_shapes auc=0.651 pr_auc=0.382 | occupational_disease auc=0.888 pr_auc=0.388
+eval focus confusion (epoch 32): mixed_shapes thr=0.650 tp=16 fp=16 tn=318 fn=102 prec=0.500 rec=0.136 f1=0.213 | occupational_disease thr=0.893 tp=10 fp=10 tn=405 fn=20 prec=0.500 rec=0.333 f1=0.400
+train macro: loss=0.4452 macro_auc=0.792 macro_pr_auc=0.435
+eval macro: loss=0.3781 macro_auc=0.667 macro_pr_auc=0.437
+eval focus (epoch 33): mixed_shapes auc=0.650 pr_auc=0.384 | occupational_disease auc=0.888 pr_auc=0.387
+eval focus confusion (epoch 33): mixed_shapes thr=0.624 tp=17 fp=17 tn=317 fn=101 prec=0.500 rec=0.144 f1=0.224 | occupational_disease thr=0.881 tp=10 fp=10 tn=405 fn=20 prec=0.500 rec=0.333 f1=0.400
+train macro: loss=0.4011 macro_auc=0.823 macro_pr_auc=0.552
+eval macro: loss=0.3777 macro_auc=0.667 macro_pr_auc=0.438
+eval focus (epoch 34): mixed_shapes auc=0.651 pr_auc=0.385 | occupational_disease auc=0.887 pr_auc=0.390
+eval focus confusion (epoch 34): mixed_shapes thr=0.628 tp=19 fp=19 tn=315 fn=99 prec=0.500 rec=0.161 f1=0.244 | occupational_disease thr=0.887 tp=10 fp=10 tn=405 fn=20 prec=0.500 rec=0.333 f1=0.400
+train macro: loss=0.4289 macro_auc=0.806 macro_pr_auc=0.573
+eval macro: loss=0.3794 macro_auc=0.670 macro_pr_auc=0.444
+eval focus (epoch 35): mixed_shapes auc=0.652 pr_auc=0.385 | occupational_disease auc=0.889 pr_auc=0.396
+eval focus confusion (epoch 35): mixed_shapes thr=0.643 tp=20 fp=20 tn=314 fn=98 prec=0.500 rec=0.169 f1=0.253 | occupational_disease thr=0.878 tp=10 fp=10 tn=405 fn=20 prec=0.500 rec=0.333 f1=0.400
+train macro: loss=0.4429 macro_auc=0.815 macro_pr_auc=0.595
+eval macro: loss=0.3784 macro_auc=0.669 macro_pr_auc=0.441
+eval focus (epoch 36): mixed_shapes auc=0.649 pr_auc=0.385 | occupational_disease auc=0.887 pr_auc=0.389
+eval focus confusion (epoch 36): mixed_shapes thr=0.634 tp=20 fp=20 tn=314 fn=98 prec=0.500 rec=0.169 f1=0.253 | occupational_disease thr=0.894 tp=10 fp=10 tn=405 fn=20 prec=0.500 rec=0.333 f1=0.400
+train macro: loss=0.4695 macro_auc=0.820 macro_pr_auc=0.584
+eval macro: loss=0.3763 macro_auc=0.670 macro_pr_auc=0.441
+eval focus (epoch 37): mixed_shapes auc=0.652 pr_auc=0.388 | occupational_disease auc=0.888 pr_auc=0.388
+eval focus confusion (epoch 37): mixed_shapes thr=0.638 tp=19 fp=19 tn=315 fn=99 prec=0.500 rec=0.161 f1=0.244 | occupational_disease thr=0.892 tp=10 fp=10 tn=405 fn=20 prec=0.500 rec=0.333 f1=0.400
+train macro: loss=0.4238 macro_auc=0.827 macro_pr_auc=0.546
+eval macro: loss=0.3789 macro_auc=0.671 macro_pr_auc=0.443
+eval focus (epoch 38): mixed_shapes auc=0.653 pr_auc=0.389 | occupational_disease auc=0.888 pr_auc=0.391
+eval focus confusion (epoch 38): mixed_shapes thr=0.643 tp=19 fp=19 tn=315 fn=99 prec=0.500 rec=0.161 f1=0.244 | occupational_disease thr=0.890 tp=10 fp=10 tn=405 fn=20 prec=0.500 rec=0.333 f1=0.400
+train macro: loss=0.4634 macro_auc=0.811 macro_pr_auc=0.566
+eval macro: loss=0.3774 macro_auc=0.670 macro_pr_auc=0.440
+eval focus (epoch 39): mixed_shapes auc=0.653 pr_auc=0.389 | occupational_disease auc=0.889 pr_auc=0.378
+eval focus confusion (epoch 39): mixed_shapes thr=0.644 tp=20 fp=20 tn=314 fn=98 prec=0.500 rec=0.169 f1=0.253 | occupational_disease thr=0.889 tp=10 fp=10 tn=405 fn=20 prec=0.500 rec=0.333 f1=0.400
+train macro: loss=0.4484 macro_auc=0.823 macro_pr_auc=0.557
+eval macro: loss=0.3748 macro_auc=0.671 macro_pr_auc=0.441
+eval focus (epoch 40): mixed_shapes auc=0.653 pr_auc=0.385 | occupational_disease auc=0.888 pr_auc=0.380
+eval focus confusion (epoch 40): mixed_shapes thr=0.638 tp=18 fp=18 tn=316 fn=100 prec=0.500 rec=0.153 f1=0.234 | occupational_disease thr=0.894 tp=10 fp=10 tn=405 fn=20 prec=0.500 rec=0.333 f1=0.400
+train macro: loss=0.4339 macro_auc=0.826 macro_pr_auc=0.575
+eval macro: loss=0.3761 macro_auc=0.671 macro_pr_auc=0.441
+eval focus (epoch 41): mixed_shapes auc=0.653 pr_auc=0.387 | occupational_disease auc=0.889 pr_auc=0.383
+eval focus confusion (epoch 41): mixed_shapes thr=0.633 tp=19 fp=19 tn=315 fn=99 prec=0.500 rec=0.161 f1=0.244 | occupational_disease thr=0.884 tp=10 fp=10 tn=405 fn=20 prec=0.500 rec=0.333 f1=0.400
+train macro: loss=0.4484 macro_auc=0.842 macro_pr_auc=0.550
+eval macro: loss=0.3755 macro_auc=0.670 macro_pr_auc=0.441
+eval focus (epoch 42): mixed_shapes auc=0.652 pr_auc=0.390 | occupational_disease auc=0.890 pr_auc=0.383
+eval focus confusion (epoch 42): mixed_shapes thr=0.637 tp=19 fp=19 tn=315 fn=99 prec=0.500 rec=0.161 f1=0.244 | occupational_disease thr=0.884 tp=10 fp=10 tn=405 fn=20 prec=0.500 rec=0.333 f1=0.400
+train macro: loss=0.4235 macro_auc=0.806 macro_pr_auc=0.583
+eval macro: loss=0.3764 macro_auc=0.670 macro_pr_auc=0.441
+eval focus (epoch 43): mixed_shapes auc=0.653 pr_auc=0.388 | occupational_disease auc=0.892 pr_auc=0.391
+eval focus confusion (epoch 43): mixed_shapes thr=0.635 tp=18 fp=18 tn=316 fn=100 prec=0.500 rec=0.153 f1=0.234 | occupational_disease thr=0.884 tp=10 fp=10 tn=405 fn=20 prec=0.500 rec=0.333 f1=0.400
+train macro: loss=0.4211 macro_auc=0.828 macro_pr_auc=0.581
+eval macro: loss=0.3764 macro_auc=0.671 macro_pr_auc=0.442
+eval focus (epoch 44): mixed_shapes auc=0.654 pr_auc=0.389 | occupational_disease auc=0.891 pr_auc=0.388
+eval focus confusion (epoch 44): mixed_shapes thr=0.637 tp=18 fp=18 tn=316 fn=100 prec=0.500 rec=0.153 f1=0.234 | occupational_disease thr=0.889 tp=10 fp=10 tn=405 fn=20 prec=0.500 rec=0.333 f1=0.400
+train macro: loss=0.4323 macro_auc=0.778 macro_pr_auc=0.550
+eval macro: loss=0.3761 macro_auc=0.670 macro_pr_auc=0.441
+eval focus (epoch 45): mixed_shapes auc=0.656 pr_auc=0.392 | occupational_disease auc=0.891 pr_auc=0.389
+eval focus confusion (epoch 45): mixed_shapes thr=0.640 tp=18 fp=18 tn=316 fn=100 prec=0.500 rec=0.153 f1=0.234 | occupational_disease thr=0.882 tp=10 fp=10 tn=405 fn=20 prec=0.500 rec=0.333 f1=0.400
+train macro: loss=0.4754 macro_auc=0.821 macro_pr_auc=0.618
+eval macro: loss=0.3773 macro_auc=0.671 macro_pr_auc=0.442
+eval focus (epoch 46): mixed_shapes auc=0.655 pr_auc=0.391 | occupational_disease auc=0.891 pr_auc=0.390
+eval focus confusion (epoch 46): mixed_shapes thr=0.641 tp=18 fp=18 tn=316 fn=100 prec=0.500 rec=0.153 f1=0.234 | occupational_disease thr=0.875 tp=10 fp=10 tn=405 fn=20 prec=0.500 rec=0.333 f1=0.400
+train macro: loss=0.4422 macro_auc=0.816 macro_pr_auc=0.565
+eval macro: loss=0.3762 macro_auc=0.671 macro_pr_auc=0.443
+eval focus (epoch 47): mixed_shapes auc=0.655 pr_auc=0.391 | occupational_disease auc=0.891 pr_auc=0.391
+eval focus confusion (epoch 47): mixed_shapes thr=0.642 tp=17 fp=17 tn=317 fn=101 prec=0.500 rec=0.144 f1=0.224 | occupational_disease thr=0.882 tp=10 fp=10 tn=405 fn=20 prec=0.500 rec=0.333 f1=0.400
+train macro: loss=0.3891 macro_auc=0.813 macro_pr_auc=0.531
+eval macro: loss=0.3758 macro_auc=0.671 macro_pr_auc=0.444
+eval focus (epoch 48): mixed_shapes auc=0.655 pr_auc=0.391 | occupational_disease auc=0.891 pr_auc=0.393
+eval focus confusion (epoch 48): mixed_shapes thr=0.641 tp=17 fp=17 tn=317 fn=101 prec=0.500 rec=0.144 f1=0.224 | occupational_disease thr=0.871 tp=10 fp=10 tn=405 fn=20 prec=0.500 rec=0.333 f1=0.400
+train macro: loss=0.4820 macro_auc=0.798 macro_pr_auc=0.551
+eval macro: loss=0.3778 macro_auc=0.670 macro_pr_auc=0.441
+eval focus (epoch 49): mixed_shapes auc=0.655 pr_auc=0.392 | occupational_disease auc=0.890 pr_auc=0.387
+eval focus confusion (epoch 49): mixed_shapes thr=0.644 tp=18 fp=18 tn=316 fn=100 prec=0.500 rec=0.153 f1=0.234 | occupational_disease thr=0.877 tp=10 fp=10 tn=405 fn=20 prec=0.500 rec=0.333 f1=0.400
+train macro: loss=0.4573 macro_auc=0.827 macro_pr_auc=0.598
+eval macro: loss=0.3765 macro_auc=0.671 macro_pr_auc=0.443
+eval focus (epoch 50): mixed_shapes auc=0.656 pr_auc=0.391 | occupational_disease auc=0.892 pr_auc=0.385
+eval focus confusion (epoch 50): mixed_shapes thr=0.640 tp=17 fp=17 tn=317 fn=101 prec=0.500 rec=0.144 f1=0.224 | occupational_disease thr=0.870 tp=10 fp=10 tn=405 fn=20 prec=0.500 rec=0.333 f1=0.400
+train macro: loss=0.4168 macro_auc=0.833 macro_pr_auc=0.566
+eval macro: loss=0.3761 macro_auc=0.672 macro_pr_auc=0.446
+eval focus (epoch 51): mixed_shapes auc=0.656 pr_auc=0.395 | occupational_disease auc=0.892 pr_auc=0.393
+eval focus confusion (epoch 51): mixed_shapes thr=0.638 tp=17 fp=17 tn=317 fn=101 prec=0.500 rec=0.144 f1=0.224 | occupational_disease thr=0.855 tp=10 fp=10 tn=405 fn=20 prec=0.500 rec=0.333 f1=0.400
+train macro: loss=0.4482 macro_auc=0.830 macro_pr_auc=0.605
+eval macro: loss=0.3765 macro_auc=0.671 macro_pr_auc=0.447
+eval focus (epoch 52): mixed_shapes auc=0.655 pr_auc=0.393 | occupational_disease auc=0.892 pr_auc=0.394
+eval focus confusion (epoch 52): mixed_shapes thr=0.637 tp=17 fp=17 tn=317 fn=101 prec=0.500 rec=0.144 f1=0.224 | occupational_disease thr=0.856 tp=10 fp=10 tn=405 fn=20 prec=0.500 rec=0.333 f1=0.400
+train macro: loss=0.4662 macro_auc=0.829 macro_pr_auc=0.633
+eval macro: loss=0.3768 macro_auc=0.671 macro_pr_auc=0.444
+eval focus (epoch 53): mixed_shapes auc=0.656 pr_auc=0.395 | occupational_disease auc=0.891 pr_auc=0.392
+eval focus confusion (epoch 53): mixed_shapes thr=0.638 tp=17 fp=17 tn=317 fn=101 prec=0.500 rec=0.144 f1=0.224 | occupational_disease thr=0.853 tp=10 fp=10 tn=405 fn=20 prec=0.500 rec=0.333 f1=0.400
+train macro: loss=0.4306 macro_auc=0.813 macro_pr_auc=0.632
+eval macro: loss=0.3758 macro_auc=0.671 macro_pr_auc=0.443
+eval focus (epoch 54): mixed_shapes auc=0.655 pr_auc=0.392 | occupational_disease auc=0.892 pr_auc=0.387
+eval focus confusion (epoch 54): mixed_shapes thr=0.638 tp=17 fp=17 tn=317 fn=101 prec=0.500 rec=0.144 f1=0.224 | occupational_disease thr=0.868 tp=10 fp=10 tn=405 fn=20 prec=0.500 rec=0.333 f1=0.400
+train macro: loss=0.4122 macro_auc=0.857 macro_pr_auc=0.624
+eval macro: loss=0.3763 macro_auc=0.670 macro_pr_auc=0.444
+eval focus (epoch 55): mixed_shapes auc=0.656 pr_auc=0.394 | occupational_disease auc=0.891 pr_auc=0.397
+eval focus confusion (epoch 55): mixed_shapes thr=0.630 tp=19 fp=19 tn=315 fn=99 prec=0.500 rec=0.161 f1=0.244 | occupational_disease thr=0.864 tp=10 fp=10 tn=405 fn=20 prec=0.500 rec=0.333 f1=0.400
+train macro: loss=0.4236 macro_auc=0.775 macro_pr_auc=0.550
+eval macro: loss=0.3769 macro_auc=0.670 macro_pr_auc=0.443
+eval focus (epoch 56): mixed_shapes auc=0.655 pr_auc=0.391 | occupational_disease auc=0.891 pr_auc=0.391
+eval focus confusion (epoch 56): mixed_shapes thr=0.642 tp=17 fp=17 tn=317 fn=101 prec=0.500 rec=0.144 f1=0.224 | occupational_disease thr=0.874 tp=10 fp=10 tn=405 fn=20 prec=0.500 rec=0.333 f1=0.400
+train macro: loss=0.4182 macro_auc=0.837 macro_pr_auc=0.547
+eval macro: loss=0.3777 macro_auc=0.671 macro_pr_auc=0.445
+eval focus (epoch 57): mixed_shapes auc=0.655 pr_auc=0.394 | occupational_disease auc=0.891 pr_auc=0.397
+eval focus confusion (epoch 57): mixed_shapes thr=0.642 tp=17 fp=17 tn=317 fn=101 prec=0.500 rec=0.144 f1=0.224 | occupational_disease thr=0.870 tp=10 fp=10 tn=405 fn=20 prec=0.500 rec=0.333 f1=0.400
+train macro: loss=0.4142 macro_auc=0.848 macro_pr_auc=0.635
+eval macro: loss=0.3768 macro_auc=0.671 macro_pr_auc=0.443
+eval focus (epoch 58): mixed_shapes auc=0.655 pr_auc=0.393 | occupational_disease auc=0.892 pr_auc=0.392
+eval focus confusion (epoch 58): mixed_shapes thr=0.631 tp=19 fp=19 tn=315 fn=99 prec=0.500 rec=0.161 f1=0.244 | occupational_disease thr=0.866 tp=10 fp=10 tn=405 fn=20 prec=0.500 rec=0.333 f1=0.400
+train macro: loss=0.4279 macro_auc=0.825 macro_pr_auc=0.571
+eval macro: loss=0.3772 macro_auc=0.671 macro_pr_auc=0.444
+eval focus (epoch 59): mixed_shapes auc=0.656 pr_auc=0.395 | occupational_disease auc=0.891 pr_auc=0.395
+eval focus confusion (epoch 59): mixed_shapes thr=0.644 tp=17 fp=17 tn=317 fn=101 prec=0.500 rec=0.144 f1=0.224 | occupational_disease thr=0.871 tp=10 fp=10 tn=405 fn=20 prec=0.500 rec=0.333 f1=0.400
+final_test macro: loss=0.4900 macro_auc=0.732 macro_pr_auc=0.485
+final_test focus (epoch 59): mixed_shapes auc=0.711 pr_auc=0.385 | occupational_disease auc=0.854 pr_auc=0.337
+/var/spool/slurm/job261956/slurm_script:27: command not found: --group-splits-by
+/var/spool/slurm/job261956/slurm_script:32: command not found: --primary-balanced-max-pos-weight
+Fri May  8 03:32:44 PM CEST 2026

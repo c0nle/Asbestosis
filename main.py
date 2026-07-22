@@ -523,7 +523,10 @@ def main() -> None:
     test_metadata  = prepared_metadata[prepared_metadata[f"Fold{fold}"] == "test"]
     val_metadata   = prepared_metadata[prepared_metadata[f"Fold{fold}"] == "val"]
     train_metadata = prepared_metadata[prepared_metadata[f"Fold{fold}"] == "train"]
-
+    print(f"Fold {fold}: train={len(train_metadata)} val={len(val_metadata)} test={len(test_metadata)} examinations")
+    print(test_metadata.head(3))
+    print(f"Fold {fold}: train={len(train_metadata.groupby('patientID'))} val={len(val_metadata.groupby('patientID'))} test={len(test_metadata.groupby('patientID'))} patients")
+    return
     group_col = _choose_group_col(
         prepared_metadata,
         requested=str(getattr(args, "group_splits_by", "auto")),
@@ -929,7 +932,7 @@ def main() -> None:
 
     best_score = None
     best_epoch = -1
-    best_path = os.path.join(output_folder, f"best_{model_name}_label={primary_label}_fold={fold}.pth")
+    best_path = os.path.join(output_folder, f"best_{model_name}_labels=multitask_fold={fold}.pth")
     no_improve = 0
     best_fixed_thresholds = None
 
@@ -1163,7 +1166,7 @@ def main() -> None:
         ),
     )
 
-    # When early stopping did not run (e.g. --combine-train-val), no best_* checkpoint
+    # When early stopping did not run (e.g.  ), no best_* checkpoint
     # exists yet.  Save one now so that analyze_results.py can load the model together
     # with its label list.  Does not overwrite an existing best_* (early-stop wins).
     if not os.path.isfile(best_path):

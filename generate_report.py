@@ -60,17 +60,72 @@ def _is_missing(val) -> bool:
 
 
 def _apply_mapping(df: pd.DataFrame, mapping_file: str) -> pd.DataFrame:
-    """Join Anforderungsnummer → fileID via mapping.csv (mirrors utils._ensure_file_id)."""
+    """
+    Join Untersuchungsnummer → fileID via mapping.csv (mirrors utils._ensure_file_id).
+
+    Uses Untersuchungsnummer as the primary key (1:1 per image).  Falls back to
+    Anforderungsnummer (de-duplicated, first match) for rows that don't match via
+    Untersuchungsnummer.
+
+    Background: medicoID encodes both keys:
+        medicoID = Anforderungsnummer + two-digit index
+        Untersuchungsnummer = Anforderungsnummer + '-' + index (no leading zero)
+
+    Joining on Anforderungsnummer alone caused cross-matches: when one exam
+    produced two images (e.g. PA + lateral), both rows received both fileIDs,
+    assigning the wrong image to 8 rows in the old pipeline.  The
+    Untersuchungsnummer join resolves each row to exactly its own image.
+    """
     mapping = pd.read_csv(mapping_file, dtype={"medicoID": str})
     mapping["fileID"] = pd.to_numeric(mapping["fileID"], errors="coerce")
-    mapping["Anforderungsnummer"] = mapping["medicoID"].str[:-2]
-    mask = mapping["Anforderungsnummer"].str.fullmatch(r"\d+").eq(True)
-    mapping = mapping[mask]
-    mapping["Anforderungsnummer"] = mapping["Anforderungsnummer"].astype(int)
-    merged = df.drop(columns=["fileID"], errors="ignore").merge(
-        mapping[["Anforderungsnummer", "fileID"]], on="Anforderungsnummer", how="left"
+    anf_series = mapping["medicoID"].str[:-2]
+    mask = anf_series.str.fullmatch(r"\d+").eq(True)
+    mapping = mapping[mask].copy()
+    mapping["Anforderungsnummer"] = anf_series[mask].astype(int)
+
+    raw_idx = mapping["medicoID"].str[-2:].str.lstrip("0")
+    mapping["_unt_key"] = (
+        mapping["Anforderungsnummer"].astype(str) + "-" +
+        raw_idx.where(raw_idx != "", other="0")
     )
-    merged["fileID"] = merged["fileID"].fillna(-1).astype(int)
+    # 7 _unt_key values appear twice in mapping.csv (same Untersuchungsnummer,
+    # two fileIDs on disk). Keep the first occurrence so each key maps to
+    # exactly one fileID — avoids duplicate training rows with identical labels.
+    mapping = mapping.drop_duplicates("_unt_key")
+
+    meta = df.drop(columns=["fileID"], errors="ignore").copy()
+
+    if "Untersuchungsnummer" in meta.columns:
+        meta["Untersuchungsnummer"] = meta["Untersuchungsnummer"].astype(str)
+        merged = meta.merge(
+            mapping[["_unt_key", "fileID"]],
+            left_on="Untersuchungsnummer", right_on="_unt_key",
+            how="left",
+        ).drop(columns=["_unt_key"], errors="ignore")
+        merged["fileID"] = merged["fileID"].fillna(-1).astype(int)
+
+        unmatched = merged["fileID"] == -1
+        if unmatched.any():
+            anf_map = (
+                mapping[["Anforderungsnummer", "fileID"]]
+                .drop_duplicates("Anforderungsnummer")
+                .set_index("Anforderungsnummer")["fileID"]
+            )
+            merged.loc[unmatched, "fileID"] = (
+                merged.loc[unmatched, "Anforderungsnummer"]
+                .map(anf_map)
+                .fillna(-1)
+                .astype(int)
+                .values
+            )
+    else:
+        merged = meta.merge(
+            mapping[["Anforderungsnummer", "fileID"]]
+            .drop_duplicates("Anforderungsnummer"),
+            on="Anforderungsnummer", how="left",
+        )
+        merged["fileID"] = merged["fileID"].fillna(-1).astype(int)
+
     return merged
 
 
@@ -123,21 +178,30 @@ def build_training_df(df_raw: pd.DataFrame) -> tuple:
         "Reason / note": "dichotome_data_anonymized_with_patientID.csv",
     })
 
-    # Step 1 — left-join adds rows where one Anforderungsnummer maps to multiple fileIDs
+    # Step 1 — left-join via Untersuchungsnummer (1:1 per image)
+    # A few exams have 2 images (PA + lateral): the old Anforderungsnummer join
+    # added duplicate rows AND cross-matched fileIDs (row for image A got fileID B).
+    # The Untersuchungsnummer join is exact (1:1) so it adds at most 1 row per
+    # unmatched Untersuchungsnummer that falls back to Anforderungsnummer.
     df_merged = _apply_mapping(df_raw, MAPPING_FILE)
     dup_added = len(df_merged) - r0
     r1 = len(df_merged)
     p1 = df_merged["patientID"].nunique()
+    extra_str = f"+{dup_added}" if dup_added >= 0 else str(dup_added)
     steps.append({
         "Step": 1,
-        "Description": "Left-join Anforderungsnummer → fileID (mapping.csv)",
+        "Description": "Left-join Untersuchungsnummer → fileID (mapping.csv)",
         "Rows": r1,
         "Patients": p1,
-        "Rows dropped": f"+{dup_added}",
+        "Rows dropped": extra_str,
         "Patients dropped": 0,
         "Reason / note": (
-            f"{dup_added} Anforderungsnummern map to more than one fileID → "
-            f"duplicate rows added"
+            "medicoID encodes Anforderungsnummer + two-digit image index. "
+            "Untersuchungsnummer = Anforderungsnummer-index gives a 1:1 key per image. "
+            f"{dup_added} extra rows from the fallback Anforderungsnummer join "
+            "(exams where Untersuchungsnummer was absent in metadata). "
+            "Previous Anforderungsnummer-only join caused 8 cross-matched rows "
+            "(exam with 2 images: each row received the other image's fileID)."
         ),
     })
 
@@ -152,7 +216,10 @@ def build_training_df(df_raw: pd.DataFrame) -> tuple:
         "Patients": p2,
         "Rows dropped": r1 - r2,
         "Patients dropped": p1 - p2,
-        "Reason / note": "Anforderungsnummer not found in mapping.csv → no image can be located",
+        "Reason / note": (
+            "Untersuchungsnummer / Anforderungsnummer not found in mapping.csv "
+            "→ no image can be located for these rows."
+        ),
     })
 
     return df_mapped, steps
@@ -169,8 +236,11 @@ FOLLOWUP_KWS = [
 FIRST_KWS = ["liegen nicht vor", "liegt nicht vor", "keine voraufnahmen"]
 
 
-def build_demographics(splits_csv: str) -> pd.DataFrame:
-    df = pd.read_csv(splits_csv)
+def build_demographics(splits_csv_or_df) -> pd.DataFrame:
+    if isinstance(splits_csv_or_df, pd.DataFrame):
+        df = splits_csv_or_df.copy()
+    else:
+        df = pd.read_csv(splits_csv_or_df)
     df["Untersuchungsdatum"] = pd.to_datetime(df["Untersuchungsdatum"], dayfirst=True)
 
     # Join Geburtsdatum + Dokumentinhalt from Befundtext via Anforderungsnummer
@@ -342,19 +412,21 @@ def main():
     df_audit = pd.DataFrame(audit_steps)
 
     print("Building demographics sheet...")
-    df_demo = build_demographics(splits_csv)
+    demo_source = splits_csv if os.path.isfile(splits_csv) else df_training
+    df_demo = build_demographics(demo_source)
+
+    sheets: list[tuple[str, pd.DataFrame]] = [
+        ("Label Distribution", df_labels),
+        ("Data Audit", df_audit),
+        ("Patient Demographics", df_demo),
+    ]
 
     print(f"Writing {args.output}...")
     with pd.ExcelWriter(args.output, engine="openpyxl") as writer:
-        df_labels.to_excel(writer, sheet_name="Label Distribution", index=False)
-        df_audit.to_excel(writer, sheet_name="Data Audit", index=False)
-        df_demo.to_excel(writer, sheet_name="Patient Demographics", index=False)
+        for sheet_name, df in sheets:
+            df.to_excel(writer, sheet_name=sheet_name, index=False)
 
-        for sheet_name, df in [
-            ("Label Distribution", df_labels),
-            ("Data Audit", df_audit),
-            ("Patient Demographics", df_demo),
-        ]:
+        for sheet_name, df in sheets:
             ws = writer.sheets[sheet_name]
             for col_idx, col in enumerate(df.columns, 1):
                 max_len = max(len(str(col)), df[col].astype(str).str.len().max())

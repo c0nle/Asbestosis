@@ -271,6 +271,7 @@ class XRayMultiTaskDataset(Dataset):
                           ``annotations``).
         label_value_maps: Dict mapping task name → ``{canonical_value → 0/1}``.
         transform:        Optional torchvision transform applied to each image.
+        filter_image_quality: If ``True``, exclude rows where ``technical_quality == 0``.
     """
 
     def __init__(
@@ -280,14 +281,24 @@ class XRayMultiTaskDataset(Dataset):
         label_columns: List[str],
         label_value_maps: Dict[str, Dict[object, int]],
         transform=None,
+        filter_image_quality: bool = False,
     ):
         self.img_dir = img_dir
         self.transform = transform
         self.label_columns = list(label_columns)
         self.label_value_maps = {k: dict(v) for k, v in label_value_maps.items()}
+        self.filter_image_quality = filter_image_quality
         self.img_labels = self._get_available_data(annotations)
 
     def _get_available_data(self, annotations: pd.DataFrame) -> pd.DataFrame:
+        # Filter by technical_quality if requested
+        if self.filter_image_quality and "technical_quality" in annotations.columns:
+            input_len = len(annotations)
+            quality_numeric = pd.to_numeric(annotations["technical_quality"], errors="coerce")
+            keep_quality = quality_numeric != 0
+            annotations = annotations.loc[keep_quality].reset_index(drop=True)
+            print(f"Filtered {input_len - len(annotations)} rows with technical_quality == 0")
+
         keep = []
         for filename in annotations["fileID"]:
             file_id = str(int(filename))

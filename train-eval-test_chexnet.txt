@@ -1,0 +1,361 @@
+[INFO] Module zlib/1.3.1 loaded.
+[INFO] Module binutils/2.42 loaded.
+[INFO] Module GCCcore/13.2.0 loaded.
+
+Due to MODULEPATH changes, the following have been reloaded:
+  1) binutils/2.42     2) zlib/1.3.1
+
+The following have been reloaded with a version change:
+  1) GCCcore/13.3.0 => GCCcore/13.2.0
+
+[INFO] Module CUDA/12.8.0 loaded.
+[INFO] Module Python/3.11.5 loaded.
+
+The following have been reloaded with a version change:
+  1) binutils/2.42 => binutils/2.40     2) zlib/1.3.1 => zlib/1.2.13
+
+Wed May  6 04:06:36 PM CEST 2026
+wandb: [wandb.login()] Loaded credentials for https://api.wandb.ai from /home/it336446/.netrc.
+wandb: Currently logged in as: debora-jutz to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: Tracking run with wandb version 0.24.0
+wandb: Run data is saved locally in /rwthfs/rz/cluster/home/rwth1954/Asbestosis/wandb/run-20260506_160723-ufkoys8m
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run multitask_chexnet_b=32_l=0.0003_n=60_fold=4
+wandb: ⭐️ View project at https://wandb.ai/debora-jutz/Asbestosis
+wandb: 🚀 View run at https://wandb.ai/debora-jutz/Asbestosis/runs/ufkoys8m
+Filtered missing images: train 1254->1253, val 468->468, test 354->354
+[mixed_shapes] pos_weight reset to 1.0 (primary_balanced sampler handles imbalance)
+[mixed_shapes] BCEWithLogitsLoss(pos_weight=1.0000) [neg=920 pos=333]
+[occupational_disease] pos_weight capped 13.89 → 10.0
+[occupational_disease] BCEWithLogitsLoss(pos_weight=10.0000) [neg=1153 pos=83]
+Active tasks for this fold: 2 -> mixed_shapes, occupational_disease
+Auto primary_task_weight=1.25 (primary_present=1253, median_present=1244)
+Task weighting: equal, primary_task_weight=1.250 (mean-normalized; sample: mixed_shapes=1.25, occupational_disease=1.00)
+Focus labels: mixed_shapes, occupational_disease
+Backbone tasks: 2/2 (min_pos=20, min_neg=20). Head-only tasks: 0.
+Train sampler: primary_balanced (mixed_shapes) pos=333 neg=920 pos_weight=2.7628
+CheXNet weights loaded from /rwthfs/rz/cluster/home/rwth1954/Asbestosis/chexnet_features_state_dict.pt (727 keys, 0 missing, 2 unexpected)
+Freezing backbone for 15 epochs
+train macro: loss=0.9531 macro_auc=0.441 macro_pr_auc=0.296
+eval macro: loss=0.8905 macro_auc=0.423 macro_pr_auc=0.177
+eval focus (epoch 0): mixed_shapes auc=0.599 pr_auc=0.308 | occupational_disease auc=0.247 pr_auc=0.046
+eval focus confusion (epoch 0): mixed_shapes thr=0.495 tp=101 fp=235 tn=112 fn=20 prec=0.301 rec=0.835 f1=0.442 | occupational_disease thr=0.500 tp=4 fp=107 tn=322 fn=28 prec=0.036 rec=0.125 f1=0.056
+Saved best model to /rwthfs/rz/cluster/home/rwth1954/Asbestosis/logs/best_chexnet_labels=multitask_fold=4.pth (epoch 0, score=0.4230)
+train macro: loss=0.9323 macro_auc=0.432 macro_pr_auc=0.276
+eval macro: loss=0.8876 macro_auc=0.435 macro_pr_auc=0.177
+eval focus (epoch 1): mixed_shapes auc=0.599 pr_auc=0.305 | occupational_disease auc=0.271 pr_auc=0.048
+eval focus confusion (epoch 1): mixed_shapes thr=0.493 tp=103 fp=237 tn=110 fn=18 prec=0.303 rec=0.851 f1=0.447 | occupational_disease thr=0.500 tp=2 fp=63 tn=366 fn=30 prec=0.031 rec=0.062 f1=0.041
+Saved best model to /rwthfs/rz/cluster/home/rwth1954/Asbestosis/logs/best_chexnet_labels=multitask_fold=4.pth (epoch 1, score=0.4350)
+train macro: loss=0.9522 macro_auc=0.439 macro_pr_auc=0.278
+eval macro: loss=0.8837 macro_auc=0.471 macro_pr_auc=0.183
+eval focus (epoch 2): mixed_shapes auc=0.603 pr_auc=0.313 | occupational_disease auc=0.339 pr_auc=0.053
+eval focus confusion (epoch 2): mixed_shapes thr=0.490 tp=102 fp=236 tn=111 fn=19 prec=0.302 rec=0.843 f1=0.444 | occupational_disease thr=0.500 tp=1 fp=26 tn=403 fn=31 prec=0.037 rec=0.031 f1=0.034
+Saved best model to /rwthfs/rz/cluster/home/rwth1954/Asbestosis/logs/best_chexnet_labels=multitask_fold=4.pth (epoch 2, score=0.4713)
+train macro: loss=0.9529 macro_auc=0.486 macro_pr_auc=0.292
+eval macro: loss=0.8776 macro_auc=0.538 macro_pr_auc=0.193
+eval focus (epoch 3): mixed_shapes auc=0.609 pr_auc=0.317 | occupational_disease auc=0.467 pr_auc=0.068
+eval focus confusion (epoch 3): mixed_shapes thr=0.486 tp=103 fp=239 tn=108 fn=18 prec=0.301 rec=0.851 f1=0.445 | occupational_disease thr=0.500 tp=0 fp=2 tn=427 fn=32 prec=0.000 rec=0.000 f1=0.000
+Saved best model to /rwthfs/rz/cluster/home/rwth1954/Asbestosis/logs/best_chexnet_labels=multitask_fold=4.pth (epoch 3, score=0.5378)
+train macro: loss=0.9117 macro_auc=0.534 macro_pr_auc=0.311
+eval macro: loss=0.8685 macro_auc=0.645 macro_pr_auc=0.234
+eval focus (epoch 4): mixed_shapes auc=0.618 pr_auc=0.324 | occupational_disease auc=0.672 pr_auc=0.145
+eval focus confusion (epoch 4): mixed_shapes thr=0.478 tp=106 fp=240 tn=107 fn=15 prec=0.306 rec=0.876 f1=0.454 | occupational_disease thr=0.492 tp=3 fp=7 tn=422 fn=29 prec=0.300 rec=0.094 f1=0.143
+Saved best model to /rwthfs/rz/cluster/home/rwth1954/Asbestosis/logs/best_chexnet_labels=multitask_fold=4.pth (epoch 4, score=0.6448)
+train macro: loss=0.9177 macro_auc=0.559 macro_pr_auc=0.308
+eval macro: loss=0.8538 macro_auc=0.722 macro_pr_auc=0.305
+eval focus (epoch 5): mixed_shapes auc=0.617 pr_auc=0.332 | occupational_disease auc=0.828 pr_auc=0.278
+eval focus confusion (epoch 5): mixed_shapes thr=0.467 tp=104 fp=242 tn=105 fn=17 prec=0.301 rec=0.860 f1=0.445 | occupational_disease thr=0.475 tp=17 fp=38 tn=391 fn=15 prec=0.309 rec=0.531 f1=0.391
+Saved best model to /rwthfs/rz/cluster/home/rwth1954/Asbestosis/logs/best_chexnet_labels=multitask_fold=4.pth (epoch 5, score=0.7224)
+train macro: loss=0.9006 macro_auc=0.633 macro_pr_auc=0.382
+eval macro: loss=0.8494 macro_auc=0.733 macro_pr_auc=0.315
+eval focus (epoch 6): mixed_shapes auc=0.623 pr_auc=0.337 | occupational_disease auc=0.843 pr_auc=0.294
+eval focus confusion (epoch 6): mixed_shapes thr=0.472 tp=108 fp=249 tn=98 fn=13 prec=0.303 rec=0.893 f1=0.452 | occupational_disease thr=0.468 tp=22 fp=50 tn=379 fn=10 prec=0.306 rec=0.688 f1=0.423
+Saved best model to /rwthfs/rz/cluster/home/rwth1954/Asbestosis/logs/best_chexnet_labels=multitask_fold=4.pth (epoch 6, score=0.7331)
+train macro: loss=0.8633 macro_auc=0.648 macro_pr_auc=0.357
+eval macro: loss=0.8428 macro_auc=0.739 macro_pr_auc=0.317
+eval focus (epoch 7): mixed_shapes auc=0.629 pr_auc=0.348 | occupational_disease auc=0.850 pr_auc=0.286
+eval focus confusion (epoch 7): mixed_shapes thr=0.473 tp=110 fp=256 tn=91 fn=11 prec=0.301 rec=0.909 f1=0.452 | occupational_disease thr=0.462 tp=21 fp=48 tn=381 fn=11 prec=0.304 rec=0.656 f1=0.416
+Saved best model to /rwthfs/rz/cluster/home/rwth1954/Asbestosis/logs/best_chexnet_labels=multitask_fold=4.pth (epoch 7, score=0.7392)
+train macro: loss=0.9165 macro_auc=0.680 macro_pr_auc=0.425
+eval macro: loss=0.8292 macro_auc=0.746 macro_pr_auc=0.330
+eval focus (epoch 8): mixed_shapes auc=0.632 pr_auc=0.352 | occupational_disease auc=0.860 pr_auc=0.309
+eval focus confusion (epoch 8): mixed_shapes thr=0.470 tp=109 fp=254 tn=93 fn=12 prec=0.300 rec=0.901 f1=0.450 | occupational_disease thr=0.467 tp=21 fp=48 tn=381 fn=11 prec=0.304 rec=0.656 f1=0.416
+Saved best model to /rwthfs/rz/cluster/home/rwth1954/Asbestosis/logs/best_chexnet_labels=multitask_fold=4.pth (epoch 8, score=0.7460)
+train macro: loss=0.8473 macro_auc=0.681 macro_pr_auc=0.396
+eval macro: loss=0.8161 macro_auc=0.748 macro_pr_auc=0.339
+eval focus (epoch 9): mixed_shapes auc=0.633 pr_auc=0.351 | occupational_disease auc=0.863 pr_auc=0.327
+eval focus confusion (epoch 9): mixed_shapes thr=0.460 tp=108 fp=250 tn=97 fn=13 prec=0.302 rec=0.893 f1=0.451 | occupational_disease thr=0.472 tp=22 fp=51 tn=378 fn=10 prec=0.301 rec=0.688 f1=0.419
+Saved best model to /rwthfs/rz/cluster/home/rwth1954/Asbestosis/logs/best_chexnet_labels=multitask_fold=4.pth (epoch 9, score=0.7478)
+train macro: loss=0.9175 macro_auc=0.692 macro_pr_auc=0.439
+eval macro: loss=0.8066 macro_auc=0.748 macro_pr_auc=0.344
+eval focus (epoch 10): mixed_shapes auc=0.633 pr_auc=0.351 | occupational_disease auc=0.863 pr_auc=0.336
+eval focus confusion (epoch 10): mixed_shapes thr=0.455 tp=111 fp=259 tn=88 fn=10 prec=0.300 rec=0.917 f1=0.452 | occupational_disease thr=0.486 tp=22 fp=51 tn=378 fn=10 prec=0.301 rec=0.688 f1=0.419
+Saved best model to /rwthfs/rz/cluster/home/rwth1954/Asbestosis/logs/best_chexnet_labels=multitask_fold=4.pth (epoch 10, score=0.7482)
+train macro: loss=0.8809 macro_auc=0.691 macro_pr_auc=0.412
+eval macro: loss=0.7938 macro_auc=0.747 macro_pr_auc=0.350
+eval focus (epoch 11): mixed_shapes auc=0.631 pr_auc=0.350 | occupational_disease auc=0.864 pr_auc=0.350
+eval focus confusion (epoch 11): mixed_shapes thr=0.449 tp=112 fp=261 tn=86 fn=9 prec=0.300 rec=0.926 f1=0.453 | occupational_disease thr=0.506 tp=22 fp=51 tn=378 fn=10 prec=0.301 rec=0.688 f1=0.419
+train macro: loss=0.8838 macro_auc=0.709 macro_pr_auc=0.448
+eval macro: loss=0.7843 macro_auc=0.748 macro_pr_auc=0.350
+eval focus (epoch 12): mixed_shapes auc=0.633 pr_auc=0.350 | occupational_disease auc=0.864 pr_auc=0.349
+eval focus confusion (epoch 12): mixed_shapes thr=0.443 tp=113 fp=263 tn=84 fn=8 prec=0.301 rec=0.934 f1=0.455 | occupational_disease thr=0.533 tp=21 fp=49 tn=380 fn=11 prec=0.300 rec=0.656 f1=0.412
+Saved best model to /rwthfs/rz/cluster/home/rwth1954/Asbestosis/logs/best_chexnet_labels=multitask_fold=4.pth (epoch 12, score=0.7484)
+train macro: loss=0.8899 macro_auc=0.696 macro_pr_auc=0.422
+eval macro: loss=0.7691 macro_auc=0.751 macro_pr_auc=0.358
+eval focus (epoch 13): mixed_shapes auc=0.636 pr_auc=0.354 | occupational_disease auc=0.866 pr_auc=0.362
+eval focus confusion (epoch 13): mixed_shapes thr=0.437 tp=113 fp=263 tn=84 fn=8 prec=0.301 rec=0.934 f1=0.455 | occupational_disease thr=0.550 tp=22 fp=50 tn=379 fn=10 prec=0.306 rec=0.688 f1=0.423
+Saved best model to /rwthfs/rz/cluster/home/rwth1954/Asbestosis/logs/best_chexnet_labels=multitask_fold=4.pth (epoch 13, score=0.7510)
+train macro: loss=0.8732 macro_auc=0.712 macro_pr_auc=0.472
+eval macro: loss=0.7678 macro_auc=0.749 macro_pr_auc=0.361
+eval focus (epoch 14): mixed_shapes auc=0.635 pr_auc=0.353 | occupational_disease auc=0.862 pr_auc=0.369
+eval focus confusion (epoch 14): mixed_shapes thr=0.448 tp=111 fp=257 tn=90 fn=10 prec=0.302 rec=0.917 f1=0.454 | occupational_disease thr=0.576 tp=22 fp=51 tn=378 fn=10 prec=0.301 rec=0.688 f1=0.419
+Unfroze backbone and reset optimizer/scheduler
+train macro: loss=0.8136 macro_auc=0.707 macro_pr_auc=0.438
+eval macro: loss=0.7713 macro_auc=0.749 macro_pr_auc=0.360
+eval focus (epoch 15): mixed_shapes auc=0.637 pr_auc=0.355 | occupational_disease auc=0.861 pr_auc=0.366
+eval focus confusion (epoch 15): mixed_shapes thr=0.449 tp=115 fp=268 tn=79 fn=6 prec=0.300 rec=0.950 f1=0.456 | occupational_disease thr=0.577 tp=22 fp=51 tn=378 fn=10 prec=0.301 rec=0.688 f1=0.419
+train macro: loss=0.8383 macro_auc=0.726 macro_pr_auc=0.470
+eval macro: loss=0.7653 macro_auc=0.751 macro_pr_auc=0.367
+eval focus (epoch 16): mixed_shapes auc=0.636 pr_auc=0.355 | occupational_disease auc=0.866 pr_auc=0.378
+eval focus confusion (epoch 16): mixed_shapes thr=0.449 tp=111 fp=259 tn=88 fn=10 prec=0.300 rec=0.917 f1=0.452 | occupational_disease thr=0.564 tp=22 fp=51 tn=378 fn=10 prec=0.301 rec=0.688 f1=0.419
+Saved best model to /rwthfs/rz/cluster/home/rwth1954/Asbestosis/logs/best_chexnet_labels=multitask_fold=4.pth (epoch 16, score=0.7511)
+train macro: loss=0.8365 macro_auc=0.737 macro_pr_auc=0.488
+eval macro: loss=0.7635 macro_auc=0.751 macro_pr_auc=0.364
+eval focus (epoch 17): mixed_shapes auc=0.638 pr_auc=0.355 | occupational_disease auc=0.865 pr_auc=0.373
+eval focus confusion (epoch 17): mixed_shapes thr=0.448 tp=113 fp=263 tn=84 fn=8 prec=0.301 rec=0.934 f1=0.455 | occupational_disease thr=0.577 tp=22 fp=51 tn=378 fn=10 prec=0.301 rec=0.688 f1=0.419
+Saved best model to /rwthfs/rz/cluster/home/rwth1954/Asbestosis/logs/best_chexnet_labels=multitask_fold=4.pth (epoch 17, score=0.7512)
+train macro: loss=0.8209 macro_auc=0.701 macro_pr_auc=0.423
+eval macro: loss=0.7626 macro_auc=0.753 macro_pr_auc=0.373
+eval focus (epoch 18): mixed_shapes auc=0.640 pr_auc=0.357 | occupational_disease auc=0.867 pr_auc=0.390
+eval focus confusion (epoch 18): mixed_shapes thr=0.446 tp=115 fp=267 tn=80 fn=6 prec=0.301 rec=0.950 f1=0.457 | occupational_disease thr=0.582 tp=22 fp=51 tn=378 fn=10 prec=0.301 rec=0.688 f1=0.419
+Saved best model to /rwthfs/rz/cluster/home/rwth1954/Asbestosis/logs/best_chexnet_labels=multitask_fold=4.pth (epoch 18, score=0.7534)
+train macro: loss=0.8031 macro_auc=0.716 macro_pr_auc=0.431
+eval macro: loss=0.7478 macro_auc=0.754 macro_pr_auc=0.376
+eval focus (epoch 19): mixed_shapes auc=0.637 pr_auc=0.357 | occupational_disease auc=0.870 pr_auc=0.394
+eval focus confusion (epoch 19): mixed_shapes thr=0.436 tp=113 fp=263 tn=84 fn=8 prec=0.301 rec=0.934 f1=0.455 | occupational_disease thr=0.570 tp=22 fp=51 tn=378 fn=10 prec=0.301 rec=0.688 f1=0.419
+Saved best model to /rwthfs/rz/cluster/home/rwth1954/Asbestosis/logs/best_chexnet_labels=multitask_fold=4.pth (epoch 19, score=0.7535)
+train macro: loss=0.8062 macro_auc=0.735 macro_pr_auc=0.469
+eval macro: loss=0.7336 macro_auc=0.755 macro_pr_auc=0.381
+eval focus (epoch 20): mixed_shapes auc=0.638 pr_auc=0.360 | occupational_disease auc=0.873 pr_auc=0.402
+eval focus confusion (epoch 20): mixed_shapes thr=0.420 tp=113 fp=263 tn=84 fn=8 prec=0.301 rec=0.934 f1=0.455 | occupational_disease thr=0.571 tp=22 fp=51 tn=378 fn=10 prec=0.301 rec=0.688 f1=0.419
+Saved best model to /rwthfs/rz/cluster/home/rwth1954/Asbestosis/logs/best_chexnet_labels=multitask_fold=4.pth (epoch 20, score=0.7554)
+train macro: loss=0.7501 macro_auc=0.735 macro_pr_auc=0.423
+eval macro: loss=0.7294 macro_auc=0.756 macro_pr_auc=0.375
+eval focus (epoch 21): mixed_shapes auc=0.641 pr_auc=0.362 | occupational_disease auc=0.871 pr_auc=0.388
+eval focus confusion (epoch 21): mixed_shapes thr=0.418 tp=115 fp=268 tn=79 fn=6 prec=0.300 rec=0.950 f1=0.456 | occupational_disease thr=0.577 tp=22 fp=51 tn=378 fn=10 prec=0.301 rec=0.688 f1=0.419
+Saved best model to /rwthfs/rz/cluster/home/rwth1954/Asbestosis/logs/best_chexnet_labels=multitask_fold=4.pth (epoch 21, score=0.7561)
+train macro: loss=0.7725 macro_auc=0.724 macro_pr_auc=0.440
+eval macro: loss=0.7095 macro_auc=0.760 macro_pr_auc=0.387
+eval focus (epoch 22): mixed_shapes auc=0.643 pr_auc=0.365 | occupational_disease auc=0.877 pr_auc=0.409
+eval focus confusion (epoch 22): mixed_shapes thr=0.406 tp=113 fp=262 tn=85 fn=8 prec=0.301 rec=0.934 f1=0.456 | occupational_disease thr=0.577 tp=22 fp=51 tn=378 fn=10 prec=0.301 rec=0.688 f1=0.419
+Saved best model to /rwthfs/rz/cluster/home/rwth1954/Asbestosis/logs/best_chexnet_labels=multitask_fold=4.pth (epoch 22, score=0.7599)
+train macro: loss=0.8066 macro_auc=0.732 macro_pr_auc=0.528
+eval macro: loss=0.7095 macro_auc=0.761 macro_pr_auc=0.384
+eval focus (epoch 23): mixed_shapes auc=0.646 pr_auc=0.371 | occupational_disease auc=0.875 pr_auc=0.398
+eval focus confusion (epoch 23): mixed_shapes thr=0.422 tp=115 fp=268 tn=79 fn=6 prec=0.300 rec=0.950 f1=0.456 | occupational_disease thr=0.615 tp=22 fp=51 tn=378 fn=10 prec=0.301 rec=0.688 f1=0.419
+Saved best model to /rwthfs/rz/cluster/home/rwth1954/Asbestosis/logs/best_chexnet_labels=multitask_fold=4.pth (epoch 23, score=0.7605)
+train macro: loss=0.8117 macro_auc=0.704 macro_pr_auc=0.435
+eval macro: loss=0.6920 macro_auc=0.761 macro_pr_auc=0.386
+eval focus (epoch 24): mixed_shapes auc=0.647 pr_auc=0.375 | occupational_disease auc=0.875 pr_auc=0.398
+eval focus confusion (epoch 24): mixed_shapes thr=0.400 tp=115 fp=267 tn=80 fn=6 prec=0.301 rec=0.950 f1=0.457 | occupational_disease thr=0.639 tp=23 fp=53 tn=376 fn=9 prec=0.303 rec=0.719 f1=0.426
+Saved best model to /rwthfs/rz/cluster/home/rwth1954/Asbestosis/logs/best_chexnet_labels=multitask_fold=4.pth (epoch 24, score=0.7612)
+train macro: loss=0.7213 macro_auc=0.745 macro_pr_auc=0.462
+eval macro: loss=0.6836 macro_auc=0.764 macro_pr_auc=0.394
+eval focus (epoch 25): mixed_shapes auc=0.648 pr_auc=0.384 | occupational_disease auc=0.879 pr_auc=0.403
+eval focus confusion (epoch 25): mixed_shapes thr=0.396 tp=115 fp=268 tn=79 fn=6 prec=0.300 rec=0.950 f1=0.456 | occupational_disease thr=0.601 tp=23 fp=53 tn=376 fn=9 prec=0.303 rec=0.719 f1=0.426
+Saved best model to /rwthfs/rz/cluster/home/rwth1954/Asbestosis/logs/best_chexnet_labels=multitask_fold=4.pth (epoch 25, score=0.7637)
+train macro: loss=0.7134 macro_auc=0.750 macro_pr_auc=0.526
+eval macro: loss=0.6770 macro_auc=0.767 macro_pr_auc=0.404
+eval focus (epoch 26): mixed_shapes auc=0.653 pr_auc=0.391 | occupational_disease auc=0.881 pr_auc=0.416
+eval focus confusion (epoch 26): mixed_shapes thr=0.387 tp=115 fp=268 tn=79 fn=6 prec=0.300 rec=0.950 f1=0.456 | occupational_disease thr=0.535 tp=23 fp=53 tn=376 fn=9 prec=0.303 rec=0.719 f1=0.426
+Saved best model to /rwthfs/rz/cluster/home/rwth1954/Asbestosis/logs/best_chexnet_labels=multitask_fold=4.pth (epoch 26, score=0.7673)
+train macro: loss=0.7648 macro_auc=0.730 macro_pr_auc=0.484
+eval macro: loss=0.6785 macro_auc=0.768 macro_pr_auc=0.400
+eval focus (epoch 27): mixed_shapes auc=0.658 pr_auc=0.397 | occupational_disease auc=0.877 pr_auc=0.404
+eval focus confusion (epoch 27): mixed_shapes thr=0.389 tp=115 fp=267 tn=80 fn=6 prec=0.301 rec=0.950 f1=0.457 | occupational_disease thr=0.621 tp=23 fp=53 tn=376 fn=9 prec=0.303 rec=0.719 f1=0.426
+Saved best model to /rwthfs/rz/cluster/home/rwth1954/Asbestosis/logs/best_chexnet_labels=multitask_fold=4.pth (epoch 27, score=0.7679)
+train macro: loss=0.6777 macro_auc=0.756 macro_pr_auc=0.464
+eval macro: loss=0.6706 macro_auc=0.771 macro_pr_auc=0.407
+eval focus (epoch 28): mixed_shapes auc=0.661 pr_auc=0.399 | occupational_disease auc=0.881 pr_auc=0.415
+eval focus confusion (epoch 28): mixed_shapes thr=0.383 tp=114 fp=266 tn=81 fn=7 prec=0.300 rec=0.942 f1=0.455 | occupational_disease thr=0.538 tp=23 fp=53 tn=376 fn=9 prec=0.303 rec=0.719 f1=0.426
+Saved best model to /rwthfs/rz/cluster/home/rwth1954/Asbestosis/logs/best_chexnet_labels=multitask_fold=4.pth (epoch 28, score=0.7714)
+train macro: loss=0.6966 macro_auc=0.756 macro_pr_auc=0.501
+eval macro: loss=0.6837 macro_auc=0.771 macro_pr_auc=0.406
+eval focus (epoch 29): mixed_shapes auc=0.660 pr_auc=0.397 | occupational_disease auc=0.882 pr_auc=0.415
+eval focus confusion (epoch 29): mixed_shapes thr=0.416 tp=113 fp=263 tn=84 fn=8 prec=0.301 rec=0.934 f1=0.455 | occupational_disease thr=0.551 tp=23 fp=53 tn=376 fn=9 prec=0.303 rec=0.719 f1=0.426
+train macro: loss=0.6941 macro_auc=0.741 macro_pr_auc=0.477
+eval macro: loss=0.6676 macro_auc=0.772 macro_pr_auc=0.403
+eval focus (epoch 30): mixed_shapes auc=0.659 pr_auc=0.396 | occupational_disease auc=0.885 pr_auc=0.410
+eval focus confusion (epoch 30): mixed_shapes thr=0.381 tp=114 fp=266 tn=81 fn=7 prec=0.300 rec=0.942 f1=0.455 | occupational_disease thr=0.572 tp=23 fp=53 tn=376 fn=9 prec=0.303 rec=0.719 f1=0.426
+Saved best model to /rwthfs/rz/cluster/home/rwth1954/Asbestosis/logs/best_chexnet_labels=multitask_fold=4.pth (epoch 30, score=0.7721)
+train macro: loss=0.7152 macro_auc=0.739 macro_pr_auc=0.495
+eval macro: loss=0.6764 macro_auc=0.772 macro_pr_auc=0.399
+eval focus (epoch 31): mixed_shapes auc=0.660 pr_auc=0.397 | occupational_disease auc=0.884 pr_auc=0.402
+eval focus confusion (epoch 31): mixed_shapes thr=0.403 tp=114 fp=266 tn=81 fn=7 prec=0.300 rec=0.942 f1=0.455 | occupational_disease thr=0.604 tp=23 fp=53 tn=376 fn=9 prec=0.303 rec=0.719 f1=0.426
+train macro: loss=0.7424 macro_auc=0.749 macro_pr_auc=0.469
+eval macro: loss=0.6662 macro_auc=0.775 macro_pr_auc=0.417
+eval focus (epoch 32): mixed_shapes auc=0.661 pr_auc=0.397 | occupational_disease auc=0.888 pr_auc=0.436
+eval focus confusion (epoch 32): mixed_shapes thr=0.379 tp=115 fp=268 tn=79 fn=6 prec=0.300 rec=0.950 f1=0.456 | occupational_disease thr=0.534 tp=23 fp=53 tn=376 fn=9 prec=0.303 rec=0.719 f1=0.426
+Saved best model to /rwthfs/rz/cluster/home/rwth1954/Asbestosis/logs/best_chexnet_labels=multitask_fold=4.pth (epoch 32, score=0.7747)
+train macro: loss=0.7138 macro_auc=0.743 macro_pr_auc=0.531
+eval macro: loss=0.6714 macro_auc=0.775 macro_pr_auc=0.415
+eval focus (epoch 33): mixed_shapes auc=0.661 pr_auc=0.397 | occupational_disease auc=0.888 pr_auc=0.433
+eval focus confusion (epoch 33): mixed_shapes thr=0.387 tp=115 fp=268 tn=79 fn=6 prec=0.300 rec=0.950 f1=0.456 | occupational_disease thr=0.582 tp=23 fp=53 tn=376 fn=9 prec=0.303 rec=0.719 f1=0.426
+train macro: loss=0.7218 macro_auc=0.752 macro_pr_auc=0.505
+eval macro: loss=0.6603 macro_auc=0.776 macro_pr_auc=0.416
+eval focus (epoch 34): mixed_shapes auc=0.661 pr_auc=0.397 | occupational_disease auc=0.890 pr_auc=0.434
+eval focus confusion (epoch 34): mixed_shapes thr=0.362 tp=115 fp=268 tn=79 fn=6 prec=0.300 rec=0.950 f1=0.456 | occupational_disease thr=0.542 tp=23 fp=53 tn=376 fn=9 prec=0.303 rec=0.719 f1=0.426
+Saved best model to /rwthfs/rz/cluster/home/rwth1954/Asbestosis/logs/best_chexnet_labels=multitask_fold=4.pth (epoch 34, score=0.7757)
+train macro: loss=0.6477 macro_auc=0.776 macro_pr_auc=0.526
+eval macro: loss=0.6615 macro_auc=0.776 macro_pr_auc=0.416
+eval focus (epoch 35): mixed_shapes auc=0.662 pr_auc=0.395 | occupational_disease auc=0.890 pr_auc=0.437
+eval focus confusion (epoch 35): mixed_shapes thr=0.365 tp=115 fp=268 tn=79 fn=6 prec=0.300 rec=0.950 f1=0.456 | occupational_disease thr=0.539 tp=24 fp=56 tn=373 fn=8 prec=0.300 rec=0.750 f1=0.429
+Saved best model to /rwthfs/rz/cluster/home/rwth1954/Asbestosis/logs/best_chexnet_labels=multitask_fold=4.pth (epoch 35, score=0.7764)
+train macro: loss=0.7129 macro_auc=0.753 macro_pr_auc=0.497
+eval macro: loss=0.6623 macro_auc=0.779 macro_pr_auc=0.417
+eval focus (epoch 36): mixed_shapes auc=0.667 pr_auc=0.397 | occupational_disease auc=0.892 pr_auc=0.437
+eval focus confusion (epoch 36): mixed_shapes thr=0.363 tp=115 fp=268 tn=79 fn=6 prec=0.300 rec=0.950 f1=0.456 | occupational_disease thr=0.461 tp=24 fp=56 tn=373 fn=8 prec=0.300 rec=0.750 f1=0.429
+Saved best model to /rwthfs/rz/cluster/home/rwth1954/Asbestosis/logs/best_chexnet_labels=multitask_fold=4.pth (epoch 36, score=0.7793)
+train macro: loss=0.7602 macro_auc=0.752 macro_pr_auc=0.553
+eval macro: loss=0.6640 macro_auc=0.779 macro_pr_auc=0.417
+eval focus (epoch 37): mixed_shapes auc=0.666 pr_auc=0.397 | occupational_disease auc=0.892 pr_auc=0.438
+eval focus confusion (epoch 37): mixed_shapes thr=0.380 tp=113 fp=263 tn=84 fn=8 prec=0.301 rec=0.934 f1=0.455 | occupational_disease thr=0.417 tp=24 fp=56 tn=373 fn=8 prec=0.300 rec=0.750 f1=0.429
+train macro: loss=0.6889 macro_auc=0.761 macro_pr_auc=0.517
+eval macro: loss=0.6572 macro_auc=0.779 macro_pr_auc=0.417
+eval focus (epoch 38): mixed_shapes auc=0.666 pr_auc=0.401 | occupational_disease auc=0.892 pr_auc=0.433
+eval focus confusion (epoch 38): mixed_shapes thr=0.355 tp=114 fp=266 tn=81 fn=7 prec=0.300 rec=0.942 f1=0.455 | occupational_disease thr=0.431 tp=24 fp=56 tn=373 fn=8 prec=0.300 rec=0.750 f1=0.429
+train macro: loss=0.6989 macro_auc=0.763 macro_pr_auc=0.535
+eval macro: loss=0.6578 macro_auc=0.778 macro_pr_auc=0.414
+eval focus (epoch 39): mixed_shapes auc=0.665 pr_auc=0.399 | occupational_disease auc=0.891 pr_auc=0.430
+eval focus confusion (epoch 39): mixed_shapes thr=0.363 tp=113 fp=263 tn=84 fn=8 prec=0.301 rec=0.934 f1=0.455 | occupational_disease thr=0.445 tp=24 fp=56 tn=373 fn=8 prec=0.300 rec=0.750 f1=0.429
+train macro: loss=0.6818 macro_auc=0.781 macro_pr_auc=0.575
+eval macro: loss=0.6581 macro_auc=0.779 macro_pr_auc=0.417
+eval focus (epoch 40): mixed_shapes auc=0.667 pr_auc=0.401 | occupational_disease auc=0.892 pr_auc=0.432
+eval focus confusion (epoch 40): mixed_shapes thr=0.359 tp=114 fp=266 tn=81 fn=7 prec=0.300 rec=0.942 f1=0.455 | occupational_disease thr=0.399 tp=24 fp=56 tn=373 fn=8 prec=0.300 rec=0.750 f1=0.429
+train macro: loss=0.6914 macro_auc=0.761 macro_pr_auc=0.519
+eval macro: loss=0.6557 macro_auc=0.780 macro_pr_auc=0.420
+eval focus (epoch 41): mixed_shapes auc=0.668 pr_auc=0.402 | occupational_disease auc=0.892 pr_auc=0.437
+eval focus confusion (epoch 41): mixed_shapes thr=0.355 tp=114 fp=266 tn=81 fn=7 prec=0.300 rec=0.942 f1=0.455 | occupational_disease thr=0.415 tp=24 fp=56 tn=373 fn=8 prec=0.300 rec=0.750 f1=0.429
+Saved best model to /rwthfs/rz/cluster/home/rwth1954/Asbestosis/logs/best_chexnet_labels=multitask_fold=4.pth (epoch 41, score=0.7797)
+train macro: loss=0.6968 macro_auc=0.778 macro_pr_auc=0.538
+eval macro: loss=0.6588 macro_auc=0.779 macro_pr_auc=0.419
+eval focus (epoch 42): mixed_shapes auc=0.667 pr_auc=0.398 | occupational_disease auc=0.892 pr_auc=0.440
+eval focus confusion (epoch 42): mixed_shapes thr=0.361 tp=114 fp=266 tn=81 fn=7 prec=0.300 rec=0.942 f1=0.455 | occupational_disease thr=0.387 tp=24 fp=56 tn=373 fn=8 prec=0.300 rec=0.750 f1=0.429
+train macro: loss=0.6759 macro_auc=0.769 macro_pr_auc=0.519
+eval macro: loss=0.6616 macro_auc=0.779 macro_pr_auc=0.418
+eval focus (epoch 43): mixed_shapes auc=0.667 pr_auc=0.402 | occupational_disease auc=0.891 pr_auc=0.435
+eval focus confusion (epoch 43): mixed_shapes thr=0.370 tp=114 fp=266 tn=81 fn=7 prec=0.300 rec=0.942 f1=0.455 | occupational_disease thr=0.427 tp=24 fp=56 tn=373 fn=8 prec=0.300 rec=0.750 f1=0.429
+train macro: loss=0.6786 macro_auc=0.784 macro_pr_auc=0.532
+eval macro: loss=0.6522 macro_auc=0.779 macro_pr_auc=0.422
+eval focus (epoch 44): mixed_shapes auc=0.667 pr_auc=0.400 | occupational_disease auc=0.891 pr_auc=0.445
+eval focus confusion (epoch 44): mixed_shapes thr=0.344 tp=114 fp=266 tn=81 fn=7 prec=0.300 rec=0.942 f1=0.455 | occupational_disease thr=0.388 tp=24 fp=56 tn=373 fn=8 prec=0.300 rec=0.750 f1=0.429
+train macro: loss=0.7220 macro_auc=0.763 macro_pr_auc=0.547
+eval macro: loss=0.6502 macro_auc=0.780 macro_pr_auc=0.419
+eval focus (epoch 45): mixed_shapes auc=0.669 pr_auc=0.398 | occupational_disease auc=0.891 pr_auc=0.441
+eval focus confusion (epoch 45): mixed_shapes thr=0.337 tp=114 fp=266 tn=81 fn=7 prec=0.300 rec=0.942 f1=0.455 | occupational_disease thr=0.381 tp=24 fp=56 tn=373 fn=8 prec=0.300 rec=0.750 f1=0.429
+Saved best model to /rwthfs/rz/cluster/home/rwth1954/Asbestosis/logs/best_chexnet_labels=multitask_fold=4.pth (epoch 45, score=0.7801)
+train macro: loss=0.6705 macro_auc=0.776 macro_pr_auc=0.545
+eval macro: loss=0.6483 macro_auc=0.781 macro_pr_auc=0.422
+eval focus (epoch 46): mixed_shapes auc=0.672 pr_auc=0.403 | occupational_disease auc=0.889 pr_auc=0.440
+eval focus confusion (epoch 46): mixed_shapes thr=0.324 tp=114 fp=266 tn=81 fn=7 prec=0.300 rec=0.942 f1=0.455 | occupational_disease thr=0.406 tp=24 fp=56 tn=373 fn=8 prec=0.300 rec=0.750 f1=0.429
+Saved best model to /rwthfs/rz/cluster/home/rwth1954/Asbestosis/logs/best_chexnet_labels=multitask_fold=4.pth (epoch 46, score=0.7809)
+train macro: loss=0.7352 macro_auc=0.765 macro_pr_auc=0.542
+eval macro: loss=0.6487 macro_auc=0.781 macro_pr_auc=0.419
+eval focus (epoch 47): mixed_shapes auc=0.671 pr_auc=0.401 | occupational_disease auc=0.890 pr_auc=0.437
+eval focus confusion (epoch 47): mixed_shapes thr=0.330 tp=114 fp=266 tn=81 fn=7 prec=0.300 rec=0.942 f1=0.455 | occupational_disease thr=0.388 tp=24 fp=56 tn=373 fn=8 prec=0.300 rec=0.750 f1=0.429
+train macro: loss=0.6664 macro_auc=0.773 macro_pr_auc=0.532
+eval macro: loss=0.6518 macro_auc=0.781 macro_pr_auc=0.421
+eval focus (epoch 48): mixed_shapes auc=0.672 pr_auc=0.405 | occupational_disease auc=0.890 pr_auc=0.437
+eval focus confusion (epoch 48): mixed_shapes thr=0.344 tp=113 fp=263 tn=84 fn=8 prec=0.301 rec=0.934 f1=0.455 | occupational_disease thr=0.432 tp=24 fp=56 tn=373 fn=8 prec=0.300 rec=0.750 f1=0.429
+train macro: loss=0.6627 macro_auc=0.782 macro_pr_auc=0.536
+eval macro: loss=0.6472 macro_auc=0.781 macro_pr_auc=0.419
+eval focus (epoch 49): mixed_shapes auc=0.673 pr_auc=0.404 | occupational_disease auc=0.889 pr_auc=0.435
+eval focus confusion (epoch 49): mixed_shapes thr=0.324 tp=115 fp=268 tn=79 fn=6 prec=0.300 rec=0.950 f1=0.456 | occupational_disease thr=0.409 tp=24 fp=56 tn=373 fn=8 prec=0.300 rec=0.750 f1=0.429
+Saved best model to /rwthfs/rz/cluster/home/rwth1954/Asbestosis/logs/best_chexnet_labels=multitask_fold=4.pth (epoch 49, score=0.7810)
+train macro: loss=0.6981 macro_auc=0.783 macro_pr_auc=0.573
+eval macro: loss=0.6471 macro_auc=0.781 macro_pr_auc=0.420
+eval focus (epoch 50): mixed_shapes auc=0.673 pr_auc=0.404 | occupational_disease auc=0.889 pr_auc=0.437
+eval focus confusion (epoch 50): mixed_shapes thr=0.324 tp=115 fp=268 tn=79 fn=6 prec=0.300 rec=0.950 f1=0.456 | occupational_disease thr=0.417 tp=24 fp=56 tn=373 fn=8 prec=0.300 rec=0.750 f1=0.429
+train macro: loss=0.6496 macro_auc=0.790 macro_pr_auc=0.589
+eval macro: loss=0.6490 macro_auc=0.781 macro_pr_auc=0.419
+eval focus (epoch 51): mixed_shapes auc=0.672 pr_auc=0.398 | occupational_disease auc=0.891 pr_auc=0.441
+eval focus confusion (epoch 51): mixed_shapes thr=0.329 tp=113 fp=263 tn=84 fn=8 prec=0.301 rec=0.934 f1=0.455 | occupational_disease thr=0.393 tp=24 fp=56 tn=373 fn=8 prec=0.300 rec=0.750 f1=0.429
+Saved best model to /rwthfs/rz/cluster/home/rwth1954/Asbestosis/logs/best_chexnet_labels=multitask_fold=4.pth (epoch 51, score=0.7812)
+train macro: loss=0.6659 macro_auc=0.766 macro_pr_auc=0.489
+eval macro: loss=0.6478 macro_auc=0.782 macro_pr_auc=0.426
+eval focus (epoch 52): mixed_shapes auc=0.672 pr_auc=0.402 | occupational_disease auc=0.891 pr_auc=0.450
+eval focus confusion (epoch 52): mixed_shapes thr=0.323 tp=115 fp=268 tn=79 fn=6 prec=0.300 rec=0.950 f1=0.456 | occupational_disease thr=0.384 tp=24 fp=56 tn=373 fn=8 prec=0.300 rec=0.750 f1=0.429
+Saved best model to /rwthfs/rz/cluster/home/rwth1954/Asbestosis/logs/best_chexnet_labels=multitask_fold=4.pth (epoch 52, score=0.7816)
+train macro: loss=0.6873 macro_auc=0.767 macro_pr_auc=0.535
+eval macro: loss=0.6478 macro_auc=0.781 macro_pr_auc=0.422
+eval focus (epoch 53): mixed_shapes auc=0.673 pr_auc=0.401 | occupational_disease auc=0.890 pr_auc=0.442
+eval focus confusion (epoch 53): mixed_shapes thr=0.320 tp=115 fp=268 tn=79 fn=6 prec=0.300 rec=0.950 f1=0.456 | occupational_disease thr=0.420 tp=24 fp=56 tn=373 fn=8 prec=0.300 rec=0.750 f1=0.429
+train macro: loss=0.6592 macro_auc=0.769 macro_pr_auc=0.533
+eval macro: loss=0.6511 macro_auc=0.781 macro_pr_auc=0.425
+eval focus (epoch 54): mixed_shapes auc=0.671 pr_auc=0.402 | occupational_disease auc=0.890 pr_auc=0.449
+eval focus confusion (epoch 54): mixed_shapes thr=0.334 tp=115 fp=268 tn=79 fn=6 prec=0.300 rec=0.950 f1=0.456 | occupational_disease thr=0.408 tp=24 fp=56 tn=373 fn=8 prec=0.300 rec=0.750 f1=0.429
+train macro: loss=0.6979 macro_auc=0.733 macro_pr_auc=0.483
+eval macro: loss=0.6496 macro_auc=0.781 macro_pr_auc=0.425
+eval focus (epoch 55): mixed_shapes auc=0.672 pr_auc=0.402 | occupational_disease auc=0.890 pr_auc=0.449
+eval focus confusion (epoch 55): mixed_shapes thr=0.329 tp=114 fp=266 tn=81 fn=7 prec=0.300 rec=0.942 f1=0.455 | occupational_disease thr=0.402 tp=24 fp=56 tn=373 fn=8 prec=0.300 rec=0.750 f1=0.429
+train macro: loss=0.6691 macro_auc=0.764 macro_pr_auc=0.467
+eval macro: loss=0.6534 macro_auc=0.780 macro_pr_auc=0.426
+eval focus (epoch 56): mixed_shapes auc=0.670 pr_auc=0.400 | occupational_disease auc=0.890 pr_auc=0.453
+eval focus confusion (epoch 56): mixed_shapes thr=0.339 tp=115 fp=268 tn=79 fn=6 prec=0.300 rec=0.950 f1=0.456 | occupational_disease thr=0.422 tp=24 fp=56 tn=373 fn=8 prec=0.300 rec=0.750 f1=0.429
+train macro: loss=0.6624 macro_auc=0.770 macro_pr_auc=0.535
+eval macro: loss=0.6576 macro_auc=0.781 macro_pr_auc=0.423
+eval focus (epoch 57): mixed_shapes auc=0.671 pr_auc=0.404 | occupational_disease auc=0.890 pr_auc=0.443
+eval focus confusion (epoch 57): mixed_shapes thr=0.354 tp=114 fp=266 tn=81 fn=7 prec=0.300 rec=0.942 f1=0.455 | occupational_disease thr=0.452 tp=24 fp=56 tn=373 fn=8 prec=0.300 rec=0.750 f1=0.429
+train macro: loss=0.6563 macro_auc=0.772 macro_pr_auc=0.536
+eval macro: loss=0.6517 macro_auc=0.781 macro_pr_auc=0.423
+eval focus (epoch 58): mixed_shapes auc=0.672 pr_auc=0.402 | occupational_disease auc=0.890 pr_auc=0.444
+eval focus confusion (epoch 58): mixed_shapes thr=0.335 tp=115 fp=268 tn=79 fn=6 prec=0.300 rec=0.950 f1=0.456 | occupational_disease thr=0.409 tp=24 fp=56 tn=373 fn=8 prec=0.300 rec=0.750 f1=0.429
+train macro: loss=0.6978 macro_auc=0.774 macro_pr_auc=0.530
+eval macro: loss=0.6517 macro_auc=0.781 macro_pr_auc=0.421
+eval focus (epoch 59): mixed_shapes auc=0.673 pr_auc=0.402 | occupational_disease auc=0.890 pr_auc=0.439
+eval focus confusion (epoch 59): mixed_shapes thr=0.339 tp=115 fp=268 tn=79 fn=6 prec=0.300 rec=0.950 f1=0.456 | occupational_disease thr=0.403 tp=24 fp=56 tn=373 fn=8 prec=0.300 rec=0.750 f1=0.429
+wandb: updating run metadata; uploading artifact run-ufkoys8m-roc_curvebest_testmixed_shapes_table-jYKzOw; uploading artifact run-ufkoys8m-pr_curvebest_testmixed_shapes_table-LmdmXQ; uploading artifact run-ufkoys8m-roc_curvebest_testoccupational_disease_table-5qO3dQ; uploading artifact run-ufkoys8m-pr_curvebest_testoccupational_disease_table-eNJd3A (+ 1 more)
+wandb: uploading artifact run-ufkoys8m-roc_curvebest_testmixed_shapes_table-jYKzOw; uploading artifact run-ufkoys8m-pr_curvebest_testmixed_shapes_table-LmdmXQ; uploading artifact run-ufkoys8m-roc_curvebest_testoccupational_disease_table-5qO3dQ; uploading artifact run-ufkoys8m-pr_curvebest_testoccupational_disease_table-eNJd3A; uploading config.yaml
+wandb: uploading artifact run-ufkoys8m-roc_curvebest_testoccupational_disease_table-5qO3dQ; uploading artifact run-ufkoys8m-pr_curvebest_testoccupational_disease_table-eNJd3A
+wandb: 
+wandb: Run history:
+wandb:  average_loss/best_test ▁
+wandb:       average_loss/eval ████▇▇▆▆▅▅▄▃▃▃▃▃▂▂▂▂▂▂▂▂▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+wandb: average_loss/final_test ▁
+wandb:      average_loss/train █████▇▇▆▇▅▅▅▅▅▅▂▂▃▂▃▄▂▂▂▂▃▃▁▁▃▁▁▁▁▁▁▂▁▁▂
+wandb:         epoch/best_test ▁
+wandb:              epoch/eval ▁▁▁▂▂▂▂▂▂▃▃▃▃▃▃▄▄▄▄▄▄▅▅▅▅▅▆▆▆▆▆▇▇▇▇▇▇███
+wandb:        epoch/final_test ▁
+wandb:             epoch/train ▁▁▁▁▁▂▂▂▂▂▃▃▃▃▃▄▄▄▄▅▅▅▅▅▅▆▆▆▆▆▆▆▇▇▇▇▇███
+wandb:     macro_auc/best_test ▁
+wandb:          macro_auc/eval ▁▁▂▃▇▇▇▇▇▇▇▇▇███████████████████████████
+wandb:                     +34 ...
+wandb: 
+wandb: Run summary:
+wandb:    average_loss/best_test 0.65295
+wandb:         average_loss/eval 0.65295
+wandb:   average_loss/final_test 0.65578
+wandb:        average_loss/train 0.69777
+wandb:           epoch/best_test 52
+wandb:                epoch/eval 59
+wandb:          epoch/final_test 59
+wandb:               epoch/train 59
+wandb: macro_accuracy/final_test 0.77867
+wandb:       macro_auc/best_test 0.76294
+wandb:                       +35 ...
+wandb: 
+wandb: 🚀 View run multitask_chexnet_b=32_l=0.0003_n=60_fold=4 at: https://wandb.ai/debora-jutz/Asbestosis/runs/ufkoys8m
+wandb: ⭐️ View project at: https://wandb.ai/debora-jutz/Asbestosis
+wandb: Synced 5 W&B file(s), 8 media file(s), 16 artifact file(s) and 0 other file(s)
+wandb: Find logs at: ./wandb/run-20260506_160723-ufkoys8m/logs
+  bootstrap (500 samples) mixed_shapes: auc=0.691 95%CI=[0.633, 0.754]
+  bootstrap (500 samples) occupational_disease: auc=0.833 95%CI=[0.714, 0.923]
+final_test macro: loss=0.6558 macro_auc=0.762 macro_pr_auc=0.343
+final_test focus (epoch 59): mixed_shapes auc=0.691 pr_auc=0.381 | occupational_disease auc=0.833 pr_auc=0.305
+final_test focus confusion (epoch 59): mixed_shapes thr=0.323 tp=76 fp=212 tn=60 fn=6 prec=0.264 rec=0.927 f1=0.411 | occupational_disease thr=0.384 tp=17 fp=57 tn=270 fn=5 prec=0.230 rec=0.773 f1=0.354
+  bootstrap (500 samples) mixed_shapes: auc=0.694 95%CI=[0.636, 0.757]
+  bootstrap (500 samples) occupational_disease: auc=0.832 95%CI=[0.714, 0.923]
+best_test macro: loss=0.6530 macro_auc=0.763 macro_pr_auc=0.337
+best_test focus (epoch 52): mixed_shapes auc=0.694 pr_auc=0.389 | occupational_disease auc=0.832 pr_auc=0.285
+best_test focus confusion (epoch 52): mixed_shapes thr=0.323 tp=76 fp=202 tn=70 fn=6 prec=0.273 rec=0.927 f1=0.422 | occupational_disease thr=0.384 tp=17 fp=54 tn=273 fn=5 prec=0.239 rec=0.773 f1=0.366
+Wed May  6 04:34:40 PM CEST 2026

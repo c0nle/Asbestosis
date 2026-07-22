@@ -42,10 +42,17 @@ from typing import Dict, List, Optional, Tuple
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 import numpy as np
 import pandas as pd
 import torch
-from sklearn.metrics import confusion_matrix, roc_auc_score, roc_curve
+from sklearn.metrics import (
+    average_precision_score,
+    confusion_matrix,
+    roc_auc_score,
+    precision_recall_curve,
+    roc_curve,
+)
 from torch.utils.data import DataLoader, SequentialSampler
 from torchvision.transforms.v2 import Compose, Normalize, Resize, ToDtype, ToImage
 
@@ -74,8 +81,9 @@ def _load_checkpoint(
     It is None when the checkpoint was saved without early-stopping.
     """
     if not os.path.isfile(path):
+        print(f"  WARNING: {path} is not existing! Skipping.")
         return None, None, None
-    state = torch.load(path, map_location=device, weights_only=False)
+    state = torch.load(path, map_location="cpu", weights_only=False)
     if not (isinstance(state, dict) and "model_state_dict" in state):
         print(f"  WARNING: {path} has unexpected format, skipping.")
         return None, None, None
@@ -132,7 +140,7 @@ def _fold_metrics(
     task: str,
 ) -> Optional[dict]:
     """
-    Compute AUC, sensitivity, specificity for one fold/task.
+    Compute AUC, precision-recall AUC, sensitivity, specificity for one fold/task.
 
     Sensitivity and specificity are computed at *threshold* (from the
     validation set).  If threshold is None the Youden-index optimum on the
@@ -150,6 +158,7 @@ def _fold_metrics(
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         auc = float(roc_auc_score(yt, yp))
+        pr_auc = float(average_precision_score(yt, yp))
         fpr_arr, tpr_arr, thresholds_arr = roc_curve(yt, yp)
 
     # Determine operating-point threshold
@@ -174,6 +183,7 @@ def _fold_metrics(
 
     return {
         "auc":             auc,
+        "pr_auc":          pr_auc,
         "sensitivity":     sens,
         "specificity":     spec,
         "threshold":       thr,
@@ -251,22 +261,39 @@ def _bootstrap_pvalue(
 # ---------------------------------------------------------------------------
 # ROC figure
 # ---------------------------------------------------------------------------
-
 _PALETTE = [
-    "#1f77b4", "#d62728", "#2ca02c", "#ff7f0e",
-    "#9467bd", "#8c564b", "#e377c2", "#7f7f7f",
+    "#1170AA",  # blue
+    "#FC7D0B",  # orange
+    "#57A44C",  # green
+    "#5FA2CE",  # light blue
+    "#C85200",  # dark orange
+    "#e377c2",  # pink
 ]
 
+_MARKERS = [
+    "o",    # balls
+    "s",     # squares
+    "^",     # triangles
+    "D",     # diamont
+    "*",     # stars
+    "v",    # triangle down
+]
+
+_MARKEVERY = 50   # place a marker every N points along the curve
+
 _LABEL_DISPLAY = {
-    "mixed_shapes":                          "Pneumoconiosis (ILO mixed shapes)",
     "occupational_disease":                  "Occupational disease",
-    "small_rounded_right":                   "Small rounded (right lung)",
-    "small_rounded_left":                    "Small rounded (left lung)",
-    "small_irregular_right":                 "Small irregular (right lung)",
-    "small_irregular_left":                  "Small irregular (left lung)",
-    "diffuse_pleural_thickening_presence":   "Diffuse pleural thickening",
     "localized_pleural_thickening_presence": "Localized pleural thickening",
-    "pleural_calcification_location":        "Pleural calcification",
+    "pleural_calcification_location":        "Pleural calcification location",
+    "mixed_shapes":                          "Mixed shapes",
+    "small_rounded_right":                   "Small rounded (right)",
+    "small_rounded_left":                    "Small rounded (left)",
+    "small_irregular_right":                 "Small irregular (right)",
+    "small_irregular_left":                  "Small irregular (left)",
+    "diffuse_pleural_thickening_presence":   "Diffuse pleural thickening",
+    "diffuse_pleural_location":              "Diffuse pleural Location", 
+    "local_pleural_location":                "Local pleural Location", 
+    "pleural_calcification_side":            "Pleural calcification side",
 }
 
 _MODEL_DISPLAY = {
@@ -300,7 +327,8 @@ def plot_auc_by_model(
     if not label_cols:
         print("  plot_auc_by_model: no predictions found, skipping.")
         return
-
+    # Same color per label as in _plot_roc / _plot_pr — keyed on label identity,
+    label_color = {lbl: _PALETTE[i % len(_PALETTE)] for i, lbl in enumerate(label_cols)}
     models = sorted(all_preds.keys())
 
     # per_label_aucs[label][model] = list of per-fold AUCs
@@ -345,13 +373,24 @@ def plot_auc_by_model(
             ax.axis("off")
             continue
 
-        bp = ax.boxplot(plotted_data, labels=plotted_models, patch_artist=True)
+        color = label_color[label]
+        bp = ax.boxplot(plotted_data, tick_labels=plotted_models, patch_artist=True)
         for patch in bp["boxes"]:
-            patch.set_facecolor("lightcoral")
+            patch.set_facecolor(color)
+            patch.set_alpha(0.55)          # lets overlapping whiskers/medians read
+            patch.set_edgecolor(color)
+        for whisker in bp["whiskers"]:
+            whisker.set_color(color)
+        for cap in bp["caps"]:
+            cap.set_color(color)
+        for median in bp["medians"]:
+            median.set_color("black")      # keep median dark for contrast
+        for flier in bp["fliers"]:
+            flier.set(markeredgecolor=color, markerfacecolor=color, markersize=4)
 
         ax.set_title(disp_label, fontsize=12, fontweight="bold")
         ax.set_ylabel("AUC")
-        ax.set_ylim([0.4, 1.0])
+        ax.set_ylim([0.0, 1.0])
         ax.grid(axis="y", alpha=0.3)
         plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha="right")
 
@@ -379,7 +418,11 @@ def _plot_roc(
     """
     label_cols = list(pooled_true.keys())
     fig, ax = plt.subplots(figsize=(7, 7))
-    ax.plot([0, 1], [0, 1], color="grey", ls="--", lw=0.9, label="Random (AUC = 0.50)")
+    # sort labels in the way curves appear for x = max_x:
+    legend_entries = []  # (sort_key, handle, label_str)
+
+    (baseline, ) = ax.plot([0, 1], [0, 1], color="grey", ls="--", lw=0.9, label="Random (AUC = 0.50)")
+    legend_entries.append((0.5, baseline, "Random (AUC = 0.50)"))
 
     for i, task in enumerate(label_cols):
         yt = pooled_true[task]
@@ -395,6 +438,9 @@ def _plot_roc(
             fpr, tpr, thrs = roc_curve(yt, yp)
 
         color    = _PALETTE[i % len(_PALETTE)]
+        marker  = _MARKERS[i % len(_MARKERS)]
+        linestyle = "solid"
+
         disp     = _LABEL_DISPLAY.get(task, task.replace("_", " ").title())
         s        = summary.get(task, {})
         auc_mean = s.get("auc_mean", float("nan"))
@@ -407,34 +453,198 @@ def _plot_roc(
             f"  AUC {auc_mean:.3f} ± {auc_sd:.3f}  |  "
             f"Sens {sens_mean:.3f}  Spec {spec_mean:.3f}"
         )
-        ax.plot(fpr, tpr, color=color, lw=1.8, label=label_str)
+        # uniform markers along FPR axis
+        fpr_asc  = fpr   # roc_curve already returns ascending fpr
+        tpr_asc  = tpr
 
-        # Mark the operating point (val-set threshold) on the curve
+        marker_fpr = _distribute_markers_evenly(max_val=fpr_asc[-1])
+        marker_tpr = np.interp(marker_fpr, fpr_asc, tpr_asc)
+
+        (line,) = ax.plot(
+            fpr, tpr,
+            color=color, lw=1.8, linestyle="solid",
+            label=label_str, zorder=5,
+        )
+        ax.plot(
+            marker_fpr, marker_tpr,
+            marker=marker, color=color, ms=7, linestyle="none",
+            markeredgecolor="white", markeredgewidth=0.5, zorder=6,
+        )
+
+        # operating point
         thr = pooled_thr.get(task)
         if thr is not None:
-            # Find closest index in the ROC threshold array
-            diffs = np.abs(thrs - thr)
+            diffs  = np.abs(thrs - thr)
             op_idx = int(np.argmin(diffs))
             ax.plot(
                 fpr[op_idx], tpr[op_idx],
-                "o", color=color, ms=7, zorder=5,
-                markeredgecolor="white", markeredgewidth=0.8,
+                marker="o", color=color, ms=9, zorder=7,
+                markeredgecolor="white", markeredgewidth=1.2,
             )
+
+        print(f"Operating point for {disp}: {thr}")
+        legend_entries.append((auc_mean, line, label_str))
 
     disp_model = _MODEL_DISPLAY.get(model_name, model_name)
     ax.set_xlabel("1 − Specificity  (False Positive Rate)", fontsize=11)
     ax.set_ylabel("Sensitivity  (True Positive Rate)", fontsize=11)
-    ax.set_title(f"ROC Curves\n{disp_model}", fontsize=11, pad=10)
-    ax.legend(loc="lower right", fontsize=7.5, framealpha=0.92, handlelength=1.5)
+    ax.set_title(f"{disp_model}", fontsize=11, pad=10)
+
+    legend_entries.sort(key=lambda e: e[0], reverse=True)  # top-to-bottom
+    handles = [ln  for _, ln, _  in legend_entries]
+    labels  = [lab for _, _,  lab in legend_entries]
+    ax.legend(handles, labels, loc="lower right", fontsize=7.5,
+              framealpha=0.92, handlelength=1.5)
+              
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1.02)
     ax.grid(True, alpha=0.25, lw=0.6)
 
-    for fmt in ("pdf", "png"):
+    for fmt in ("svg", "png"):
         out = os.path.join(output_folder, f"roc_{model_name}.{fmt}")
         fig.savefig(out, dpi=200, bbox_inches="tight")
     plt.close(fig)
     print(f"  Saved: {os.path.join(output_folder, f'roc_{model_name}.pdf')}")
+
+
+def _distribute_markers_evenly(
+    max_val: float,
+    interval: float = 0.2,
+    n_per_interval: int = 3,
+) -> list:
+    marker_positions = []
+    for interval_start in np.arange(0.0, 1.0, interval):
+        for k in range(1, n_per_interval + 1):          # 1, 2, 3
+            frac = k / n_per_interval                   # 1/3, 2/3, 3/3
+            r_target = interval_start + frac * interval
+            if r_target <= max_val:
+                marker_positions.append(r_target)
+    return marker_positions
+
+def _plot_pr(
+    model_name:    str,
+    pooled_true:   Dict[str, np.ndarray],
+    pooled_prob:   Dict[str, np.ndarray],
+    summary:       Dict[str, dict],
+    output_folder: str,
+    normalize:     bool = True,   # subtract prevalence, center at 0.5
+) -> None:
+    """
+    One precision-recall figure per model.
+    Each label gets its own curve (pooled cross-validation test predictions).
+    When normalize=True, precision is shifted by (precision - prevalence + 0.5)
+    so all baselines align at y=0.5, making lift directly comparable across labels.
+    """
+    label_cols = list(pooled_true.keys())
+    fig, ax = plt.subplots(figsize=(7, 7))
+
+    legend_entries = []
+
+    for i, task in enumerate(label_cols):
+        yt = pooled_true[task]
+        yp = pooled_prob[task]
+        valid = np.isfinite(yt) & np.isfinite(yp)
+        yt = yt[valid].astype(int)
+        yp = yp[valid]
+        if len(yt) == 0 or np.unique(yt).size < 2:
+            continue
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            precision, recall, _ = precision_recall_curve(yt, yp)
+
+        prevalence = float(np.mean(yt))
+
+        # --- normalization ---
+        if normalize:
+            precision_plot = precision - prevalence + 0.5
+            baseline_y     = 0.5
+        else:
+            precision_plot = precision
+            baseline_y     = prevalence
+
+        color  = _PALETTE[i % len(_PALETTE)]
+        marker = _MARKERS[i % len(_MARKERS)]
+
+        disp        = _LABEL_DISPLAY.get(task, task.replace("_", " ").title())
+        s           = summary.get(task, {})
+        pr_auc_mean = s.get("pr_auc_mean", float("nan"))
+        pr_auc_sd   = s.get("pr_auc_sd",   float("nan"))
+
+        label_str = (
+            f"{disp}\n"
+            f"  PR AUC {pr_auc_mean:.3f} ± {pr_auc_sd:.3f}  |  "
+            f"prevalence={prevalence:.3f}"
+        )
+
+        # --- uniform markers: 3 per 0.2 recall interval ---
+        # recall from precision_recall_curve is decreasing; reverse for interpolation
+        recall_asc = recall[::-1]
+        prec_asc   = precision_plot[::-1]
+
+        marker_recall = _distribute_markers_evenly(recall_asc[-1])
+
+        # interpolate precision at those recall values
+        marker_prec = np.interp(marker_recall, recall_asc, prec_asc)
+
+        # line itself
+        (line,) = ax.plot(
+            recall, precision_plot,
+            color=color, lw=1.8, linestyle="solid", label=label_str,
+            zorder=5,
+        )
+        # only markers
+        ax.plot(
+            marker_recall, marker_prec,
+            marker=marker, color=color, ms=7, linestyle="none",
+            markeredgecolor="white", markeredgewidth=0.5, zorder=6,
+        )
+
+        if (normalize and i == 0) or not normalize:
+            # baseline hline
+            baseline = ax.hlines(
+                baseline_y, 0.0, 1.0,
+                color=color, lw=1.0, alpha=0.4,
+                linestyle=(0, (2, 2)), zorder=1,
+            )
+            legend_entries.append(baseline_y, baseline, "Random (PR AUC = 0.50)")
+
+        legend_entries.append((precision_plot[np.argmax(recall)], line, label_str))
+
+    # dummy handle for baselines
+    prevalence_handle = Line2D(
+        [0], [0], color="black", lw=1.0, alpha=0.4, linestyle=(0, (2, 2)),
+    )
+    legend_entries.append((-np.inf, prevalence_handle, "Prevalence baseline"))
+
+    legend_entries.sort(key=lambda e: e[0], reverse=True)
+    handles = [ln  for _, ln, _  in legend_entries]
+    labels  = [lab for _, _,  lab in legend_entries]
+
+    disp_model = _MODEL_DISPLAY.get(model_name, model_name)
+    ax.set_xlabel("Recall", fontsize=11)
+    ax.set_ylabel(
+        "Precision − prevalence + 0.5  (lift above baseline)" if normalize else "Precision",
+        fontsize=11,
+    )
+    ax.set_title(disp_model, fontsize=11, pad=10)
+
+    if normalize:
+        ax.axhline(0.5, color="grey", lw=0.8, ls="--", alpha=0.6, zorder=0)
+        ax.set_ylim(0, 1)
+    else:
+        ax.set_ylim(0, 1)
+    ax.set_xlim(0, 1)
+    ax.grid(True, alpha=0.25, lw=0.6)
+
+    ax.legend(handles, labels, loc="center right", fontsize=7.5,
+              framealpha=0.92, handlelength=1.5)
+
+    for fmt in ("svg", "png"):
+        out = os.path.join(output_folder, f"pr_{model_name}.{fmt}")
+        fig.savefig(out, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved: {os.path.join(output_folder, f'pr_{model_name}.svg')}")
 
 
 # ---------------------------------------------------------------------------
@@ -475,7 +685,7 @@ def main() -> None:
     args = parser.parse_args()
 
     _set_seed(args.seed)
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
     print(f"Device: {device}\n")
 
     os.makedirs(args.output_folder, exist_ok=True)
@@ -513,6 +723,7 @@ def main() -> None:
     # Structure: model_name → fold_idx → task → {prob, y_true, mask, threshold}
     all_preds:     Dict[str, Dict[int, Dict[str, dict]]] = {}
     all_thresholds: Dict[str, Dict[int, Dict[str, Optional[float]]]] = {}
+    all_label = ["mixed_shapes", "diffuse_pleural_location", "local_pleural_location", "pleural_calcification_location", "pleural_calcification_side", "occupational_disease"]  # imbalanced: "diffuse_pleural_thickening_width" "diffuse_pleural_thickening_extend" "small_irregular_size" "localized_pleural_thickening_extend" 
 
     for model_name in args.models:
         print(f"\n{'='*70}")
@@ -533,6 +744,7 @@ def main() -> None:
             ckpt_path = os.path.join(
                 ckpt_folder, f"best_{model_name}_labels=multitask_fold={fold_idx}.pth"
             )
+            print(f"Load model from {ckpt_path}")
             model, label_cols, val_thresholds = _load_checkpoint(
                 ckpt_path, model_name, device, args.head_dropout
             )
@@ -563,7 +775,7 @@ def main() -> None:
             for col in label_cols:
                 vm, _ = _binary_value_map_from_series(metadata[col], task=col)
                 task_value_maps[col] = vm
-
+            print(label_cols, flush=True)
             dataset = XRayMultiTaskDataset(
                 test_meta[["fileID"] + label_cols], base_folder,
                 label_columns=label_cols,
@@ -652,15 +864,17 @@ def main() -> None:
             if not fold_metric_list:
                 continue
 
-            aucs  = [m["auc"]         for _, m in fold_metric_list]
-            senss = [m["sensitivity"] for _, m in fold_metric_list]
-            specs = [m["specificity"] for _, m in fold_metric_list]
+            aucs   = [m["auc"]        for _, m in fold_metric_list]
+            pr_aucs = [m["pr_auc"]    for _, m in fold_metric_list]
+            senss  = [m["sensitivity"] for _, m in fold_metric_list]
+            specs  = [m["specificity"] for _, m in fold_metric_list]
             n_folds_used = len(fold_metric_list)
             ddof = 1 if n_folds_used > 1 else 0
 
-            auc_mean  = float(np.mean(aucs));   auc_sd  = float(np.std(aucs,  ddof=ddof))
-            sens_mean = float(np.mean(senss));  sens_sd = float(np.std(senss, ddof=ddof))
-            spec_mean = float(np.mean(specs));  spec_sd = float(np.std(specs, ddof=ddof))
+            auc_mean    = float(np.mean(aucs));    auc_sd    = float(np.std(aucs,   ddof=ddof))
+            pr_auc_mean = float(np.mean(pr_aucs)); pr_auc_sd = float(np.std(pr_aucs, ddof=ddof))
+            sens_mean   = float(np.mean(senss));   sens_sd   = float(np.std(senss, ddof=ddof))
+            spec_mean   = float(np.mean(specs));   spec_sd   = float(np.std(specs, ddof=ddof))
 
             fallback_folds = [
                 fi for fi, m in fold_metric_list
@@ -674,15 +888,17 @@ def main() -> None:
             print(
                 f"  {task:45s}  "
                 f"AUC  {auc_mean:.3f} ± {auc_sd:.3f}  |  "
+                f"PR AUC {pr_auc_mean:.3f} ± {pr_auc_sd:.3f}  |  "
                 f"Sens {sens_mean:.3f} ± {sens_sd:.3f}  |  "
                 f"Spec {spec_mean:.3f} ± {spec_sd:.3f}"
                 f"{thr_note}"
             )
 
             model_task_summary[model_name][task] = {
-                "auc_mean":  auc_mean,  "auc_sd":  auc_sd,
-                "sens_mean": sens_mean, "sens_sd": sens_sd,
-                "spec_mean": spec_mean, "spec_sd": spec_sd,
+                "auc_mean":    auc_mean,    "auc_sd":    auc_sd,
+                "pr_auc_mean": pr_auc_mean, "pr_auc_sd": pr_auc_sd,
+                "sens_mean":   sens_mean,   "sens_sd":   sens_sd,
+                "spec_mean":   spec_mean,   "spec_sd":   spec_sd,
             }
 
             for fold_idx, m in fold_metric_list:
@@ -691,6 +907,7 @@ def main() -> None:
                     "label":            task,
                     "fold":             fold_idx,
                     "auc":              m["auc"],
+                    "pr_auc":           m["pr_auc"],
                     "sensitivity":      m["sensitivity"],
                     "specificity":      m["specificity"],
                     "threshold":        m["threshold"],
@@ -721,6 +938,7 @@ def main() -> None:
     # -----------------------------------------------------------------------
     # Pairwise bootstrap p-values
     # -----------------------------------------------------------------------
+    
     if args.n_bootstrap > 0 and len(args.models) >= 2:
         print(f"\n\n{'='*70}")
         print(
@@ -802,7 +1020,6 @@ def main() -> None:
             path_pw = os.path.join(args.output_folder, "pairwise_pvalues.csv")
             df_pw.to_csv(path_pw, index=False)
             print(f"\nSaved: {path_pw}")
-
     # -----------------------------------------------------------------------
     # ROC figures
     # -----------------------------------------------------------------------
@@ -845,6 +1062,7 @@ def main() -> None:
 
         summary = model_task_summary.get(model_name, {})
         _plot_roc(model_name, pooled_true, pooled_prob, pooled_thr, summary, args.output_folder)
+        _plot_pr(model_name, pooled_true, pooled_prob, summary, args.output_folder)
     plot_auc_by_model(all_preds, args.output_folder)
     print("\nDone.")
 
